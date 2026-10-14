@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}404 Not Found{% endblock %}
+{% block content %}
+<div class="empty-state" style="margin-top:5rem">
+  <i class="bi bi-question-circle-fill" style="color:rgba(255,255,255,.2)"></i>
+  <h2 style="color:rgba(255,255,255,.6);font-weight:700">404</h2>
+  <h5>Halaman Tidak Ditemukan</h5>
+  <p style="font-size:.85rem">Halaman yang Anda cari tidak ada.</p>
+  <a href="{{ url_for('index') }}" class="btn btn-primary-grad mt-3">
+    <i class="bi bi-arrow-left me-1"></i>Kembali ke Dashboard
+  </a>
+</div>
+{% endblock %}

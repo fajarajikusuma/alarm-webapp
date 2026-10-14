@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Audio Library — Web Alarm{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="page-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+  <div>
+    <h1><i class="bi bi-music-note-list me-2" style="color:#818cf8"></i>Audio Library</h1>
+    <div class="subtitle">Kelola file MP3 untuk digunakan sebagai alarm</div>
+  </div>
+</div>
+
+<!-- Upload Card (Admin) -->
+{% if is_admin() %}
+<div class="card mb-3">
+  <div class="card-header">
+    <i class="bi bi-cloud-upload me-2" style="color:#818cf8"></i>Upload Audio Baru
+  </div>
+  <div class="p-3">
+    <form method="post" action="{{ url_for('upload_audio') }}" enctype="multipart/form-data">
+      <div class="mb-3">
+        <label class="form-label">Pilih File MP3 <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">(maks. 10 MB)</span></label>
+        <input class="form-control" type="file" name="file" id="fileInput"
+               accept=".mp3,audio/mpeg" required/>
+        <div id="fileInfo" class="mt-1" style="font-size:.75rem;color:var(--text-muted);display:none">
+          <i class="bi bi-file-earmark-music me-1"></i><span id="fileName"></span>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary-grad px-4 py-2">
+        <i class="bi bi-upload me-1"></i>Upload
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<!-- Audio List -->
+<div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-collection-play me-2" style="color:#818cf8"></i>Daftar Audio</span>
+    <span style="font-size:.72rem;color:var(--text-muted);font-weight:400">{{ audios|length }} file</span>
+  </div>
+
+  {% if audios %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:36px">#</th>
+          <th>Nama File</th>
+          <th>Preview</th>
+          <th class="d-none d-md-table-cell">Diupload Oleh</th>
+          {% if is_admin() %}<th style="width:60px;text-align:center">Aksi</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for audio in audios %}
+        <tr>
+          <td style="color:var(--text-muted)">{{ loop.index }}</td>
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              <span style="width:30px;height:30px;background:rgba(99,102,241,.12);
+                           border-radius:7px;display:inline-flex;align-items:center;
+                           justify-content:center;color:#818cf8;flex-shrink:0">
+                <i class="bi bi-file-earmark-music-fill" style="font-size:.8rem"></i>
+              </span>
+              <span style="font-weight:500;color:#e2e8f0;word-break:break-word;min-width:0">
+                {{ audio.original_name }}
+              </span>
+            </div>
+          </td>
+          <td style="min-width:160px">
+            <audio controls preload="none" style="width:100%;max-width:220px">
+              <source src="{{ url_for('static', filename='uploads/audios/' + audio.filename) }}"
+                      type="audio/mpeg"/>
+            </audio>
+          </td>
+          <td class="d-none d-md-table-cell" style="color:var(--text-muted);font-size:.78rem">
+            <i class="bi bi-person me-1"></i>{{ audio.uploader.name }}
+          </td>
+          {% if is_admin() %}
+          <td style="text-align:center">
+            <form action="{{ url_for('delete_audio', audio_id=audio.id) }}" method="post"
+                  onsubmit="return confirm('Hapus {{ audio.original_name }}?')">
+              <button type="submit" class="btn-icon danger" title="Hapus">
+                <i class="bi bi-trash-fill"></i>
+              </button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <i class="bi bi-file-earmark-music"></i>
+    <h5>Belum ada audio</h5>
+    {% if is_admin() %}
+    <p style="font-size:.8rem;color:var(--text-muted)">Upload MP3 menggunakan form di atas.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.getElementById('fileInput')?.addEventListener('change', function() {
+    const info = document.getElementById('fileInfo');
+    const name = document.getElementById('fileName');
+    if (this.files[0]) {
+      const mb = (this.files[0].size / 1024 / 1024).toFixed(2);
+      name.textContent = this.files[0].name + ' (' + mb + ' MB)';
+      info.style.display = 'block';
+    } else {
+      info.style.display = 'none';
+    }
+  });
+</script>
+{% endblock %}

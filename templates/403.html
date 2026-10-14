@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}403 Forbidden{% endblock %}
+{% block content %}
+<div class="empty-state" style="margin-top:5rem">
+  <i class="bi bi-shield-lock-fill" style="color:#f87171"></i>
+  <h2 style="color:#f87171;font-weight:700">403</h2>
+  <h5>Akses Ditolak</h5>
+  <p style="font-size:.85rem">Anda tidak memiliki izin untuk mengakses halaman ini.</p>
+  <a href="{{ url_for('index') }}" class="btn btn-primary-grad mt-3">
+    <i class="bi bi-arrow-left me-1"></i>Kembali ke Dashboard
+  </a>
+</div>
+{% endblock %}

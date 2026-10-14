@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Web Alarm{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="page-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+  <div>
+    <h1><i class="bi bi-grid-1x2 me-2" style="color:#818cf8"></i>Dashboard</h1>
+    <div class="subtitle">Kelola semua jadwal alarm Anda</div>
+  </div>
+  {% if is_admin() %}
+  <a href="{{ url_for('new_schedule') }}" class="btn btn-primary-grad px-3 py-2">
+    <i class="bi bi-plus-lg me-1"></i>Buat Jadwal
+  </a>
+  {% endif %}
+</div>
+
+<!-- Clock + Stat Cards -->
+<div class="row g-2 mb-3">
+  <!-- Realtime Clock -->
+  <div class="col-12 col-sm-6 col-lg-4">
+    <div class="stat-card h-100" style="border-color:rgba(99,102,241,.25)">
+      <div class="d-flex align-items-center gap-3">
+        <div class="stat-icon purple"><i class="bi bi-clock-fill"></i></div>
+        <div>
+          <div id="clockTime"
+               style="font-size:1.9rem;font-weight:700;color:#fff;
+                      font-family:monospace;letter-spacing:1px;line-height:1">
+            --:--:--
+          </div>
+          <div id="clockDate" style="font-size:.72rem;color:var(--text-muted);margin-top:3px">
+            Memuat…
+          </div>
+          <div style="font-size:.65rem;color:rgba(99,102,241,.8);margin-top:2px;font-weight:600">
+            WIB (UTC+7) · Jam Server
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stat: Total Jadwal -->
+  <div class="col-6 col-sm-3 col-lg-4">
+    <div class="stat-card">
+      <div class="d-flex align-items-center gap-2">
+        <div class="stat-icon green d-none d-sm-flex"><i class="bi bi-check-circle"></i></div>
+        <div>
+          <div class="stat-value">{{ active_count }}<span style="font-size:1rem;color:var(--text-muted)">/{{ total }}</span></div>
+          <div class="stat-label">Jadwal Aktif</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stat: Audio -->
+  <div class="col-6 col-sm-3 col-lg-4">
+    <div class="stat-card">
+      <div class="d-flex align-items-center gap-2">
+        <div class="stat-icon blue d-none d-sm-flex"><i class="bi bi-music-note-beamed"></i></div>
+        <div>
+          <div class="stat-value">{{ audio_count }}</div>
+          <div class="stat-label">File Audio</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Schedule Table -->
+<div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-alarm me-2" style="color:#818cf8"></i>Jadwal Alarm</span>
+    <span style="font-size:.72rem;color:var(--text-muted);font-weight:400">{{ total }} jadwal</span>
+  </div>
+
+  {% if schedules %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:36px">#</th>
+          <th>Label / Audio</th>
+          <th style="width:90px">Waktu</th>
+          <th class="d-none d-sm-table-cell">Hari</th>
+          <th style="width:90px">Status</th>
+          {% if is_admin() %}<th style="width:110px;text-align:center">Aksi</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in schedules %}
+        <tr>
+          <td style="color:var(--text-muted)">{{ loop.index }}</td>
+          <td>
+            <div style="font-weight:500;color:#e2e8f0;word-break:break-word">
+              {{ s.label or s.audio.original_name }}
+            </div>
+            {% if s.label %}
+            <div style="font-size:.72rem;color:var(--text-muted)">
+              <i class="bi bi-music-note me-1"></i>{{ s.audio.original_name }}
+            </div>
+            {% endif %}
+            <!-- Show days on mobile (hidden col) -->
+            <div class="d-sm-none mt-1" style="font-size:.7rem;color:var(--text-muted)">
+              {{ s.days_display() }}
+            </div>
+          </td>
+          <td><span class="badge-time">{{ s.time_display() }}</span></td>
+          <td class="d-none d-sm-table-cell" style="font-size:.78rem;color:var(--text-muted)">
+            {{ s.days_display() }}
+          </td>
+          <td>
+            {% if s.is_active %}
+              <span class="badge-active">Aktif</span>
+            {% else %}
+              <span class="badge-inactive">Nonaktif</span>
+            {% endif %}
+          </td>
+          {% if is_admin() %}
+          <td>
+            <div class="d-flex justify-content-center gap-1">
+              <form action="{{ url_for('toggle_schedule', schedule_id=s.id) }}" method="post">
+                <button type="submit"
+                        class="btn-icon {% if s.is_active %}warning{% else %}success{% endif %}"
+                        title="{% if s.is_active %}Nonaktifkan{% else %}Aktifkan{% endif %}">
+                  <i class="bi {% if s.is_active %}bi-pause-fill{% else %}bi-play-fill{% endif %}"></i>
+                </button>
+              </form>
+              <a href="{{ url_for('edit_schedule', schedule_id=s.id) }}"
+                 class="btn-icon info" title="Edit">
+                <i class="bi bi-pencil-fill"></i>
+              </a>
+              <form action="{{ url_for('delete_schedule', schedule_id=s.id) }}" method="post"
+                    onsubmit="return confirm('Hapus jadwal ini?')">
+                <button type="submit" class="btn-icon danger" title="Hapus">
+                  <i class="bi bi-trash-fill"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <i class="bi bi-calendar-x"></i>
+    <h5>Belum ada jadwal</h5>
+    {% if is_admin() %}
+    <a href="{{ url_for('new_schedule') }}" class="btn btn-primary-grad px-4 mt-2">
+      <i class="bi bi-plus-lg me-1"></i>Buat Jadwal Pertama
+    </a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Realtime clock — sync dengan jam server WIB setiap detik
+  let serverOffset = 0; // ms difference between server and client
+
+  function updateClock(serverTimeStr) {
+    // serverTimeStr = "HH:MM:SS"
+    const [h, m, s] = serverTimeStr.split(':').map(Number);
+    const now = new Date();
+    const serverMs = (h * 3600 + m * 60 + s) * 1000;
+    const clientMs = (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) * 1000;
+    serverOffset = serverMs - clientMs;
+  }
+
+  function tickClock() {
+    const now = new Date(Date.now() + serverOffset);
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    document.getElementById('clockTime').textContent = h + ':' + m + ':' + s;
+  }
+
+  // Fetch server time once to sync offset
+  fetch('/api/time')
+    .then(r => r.json())
+    .then(data => {
+      updateClock(data.time);
+      document.getElementById('clockDate').textContent = data.date;
+      setInterval(tickClock, 1000);
+      tickClock();
+    })
+    .catch(() => {
+      // Fallback: use browser time
+      setInterval(() => {
+        const now = new Date();
+        const t = [now.getHours(), now.getMinutes(), now.getSeconds()]
+          .map(n => String(n).padStart(2,'0')).join(':');
+        document.getElementById('clockTime').textContent = t;
+      }, 1000);
+    });
+
+  // Re-sync server offset every 60 seconds (drift prevention)
+  setInterval(() => {
+    fetch('/api/time')
+      .then(r => r.json())
+      .then(data => {
+        updateClock(data.time);
+        document.getElementById('clockDate').textContent = data.date;
+      })
+      .catch(() => {});
+  }, 60000);
+</script>
+{% endblock %}

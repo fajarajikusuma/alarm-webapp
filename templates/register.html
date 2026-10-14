@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Register — Web Alarm{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center" style="margin-top:2.5rem">
+  <div class="col-12 col-sm-8 col-md-6 col-lg-4 col-xl-3">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo"><i class="bi bi-person-plus-fill"></i></div>
+        <h5 class="mb-1" style="color:#fff;font-size:1.05rem">Buat Akun</h5>
+        <p style="color:var(--text-muted);font-size:.78rem;margin:0">Web Alarm System</p>
+      </div>
+      <div class="p-3 p-sm-4">
+        <form method="post" novalidate>
+          <div class="mb-3">
+            <label class="form-label">Nama Lengkap</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-person"></i></span>
+              <input type="text" class="form-control" name="name"
+                     placeholder="John Doe" required autocomplete="name"/>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+              <input type="email" class="form-control" name="email"
+                     placeholder="anda@domain.com" required autocomplete="email"/>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-lock"></i></span>
+              <input type="password" class="form-control" name="password"
+                     placeholder="Min. 8 karakter" required minlength="8"
+                     autocomplete="new-password"/>
+            </div>
+          </div>
+          <div class="mb-4">
+            <label class="form-label">Konfirmasi Password</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+              <input type="password" class="form-control" name="confirm_password"
+                     placeholder="Ulangi password" required autocomplete="new-password"/>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary-grad w-100 py-2">
+            <i class="bi bi-person-check-fill me-2"></i>Daftar Sekarang
+          </button>
+        </form>
+      </div>
+      <div class="text-center pb-3" style="font-size:.8rem;color:var(--text-muted)">
+        Sudah punya akun?
+        <a href="{{ url_for('login') }}" style="color:#818cf8;font-weight:600">Login</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

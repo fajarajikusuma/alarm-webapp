@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}{% if schedule %}Edit{% else %}Buat{% endif %} Jadwal — Web Alarm{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>
+    <i class="bi bi-{% if schedule %}pencil-fill{% else %}plus-circle-fill{% endif %} me-2"
+       style="color:#818cf8"></i>
+    {% if schedule %}Edit Jadwal{% else %}Buat Jadwal Baru{% endif %}
+  </h1>
+  <div class="subtitle">
+    {% if schedule %}Ubah pengaturan jadwal #{{ schedule.id }}
+    {% else %}Tambahkan jadwal alarm baru{% endif %}
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-md-9 col-lg-7 col-xl-6">
+    <div class="card">
+      <div class="p-3 p-md-4">
+        <form method="post" novalidate>
+
+          <!-- Label -->
+          <div class="mb-3">
+            <label class="form-label">
+              Label
+              <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">
+                (opsional)
+              </span>
+            </label>
+            <input type="text" class="form-control" name="label"
+                   placeholder="contoh: Bel Masuk, Sholat Dzuhur…"
+                   value="{{ schedule.label or '' if schedule else '' }}"/>
+          </div>
+
+          <!-- Audio -->
+          <div class="mb-3">
+            <label class="form-label"><i class="bi bi-music-note me-1"></i>File Audio</label>
+            {% if audios %}
+            <select class="form-select" name="audio_id" required>
+              <option value="" disabled {% if not schedule %}selected{% endif %}>
+                — Pilih audio —
+              </option>
+              {% for audio in audios %}
+                <option value="{{ audio.id }}"
+                  {% if schedule and schedule.audio_id == audio.id %}selected{% endif %}>
+                  {{ audio.original_name }}
+                </option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <div class="alert alert-warning mb-0" style="font-size:.82rem">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              Belum ada audio.
+              <a href="{{ url_for('audios') }}" style="color:inherit;font-weight:600">Upload dulu</a>.
+            </div>
+            {% endif %}
+          </div>
+
+          <!-- Time -->
+          <div class="mb-3">
+            <label class="form-label"><i class="bi bi-clock me-1"></i>Waktu Alarm</label>
+            <input type="time" class="form-control" name="time" required
+                   value="{{ schedule.time_display() if schedule else '' }}"
+                   style="font-size:1.4rem;font-weight:700;color:#fff;
+                          letter-spacing:2px;text-align:center;padding:.6rem"/>
+          </div>
+
+          <!-- Days -->
+          <div class="mb-4">
+            <label class="form-label d-block"><i class="bi bi-calendar-week me-1"></i>Hari</label>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              {% set day_labels = [
+                ('0','Sen'),('1','Sel'),('2','Rab'),
+                ('3','Kam'),('4','Jum'),('5','Sab'),('6','Min')
+              ] %}
+              {% for val, label_text in day_labels %}
+                {% set checked = schedule and val in schedule.days_of_week.split(',') %}
+                <div class="day-chip">
+                  <input type="checkbox" id="day_{{ val }}" name="days"
+                         value="{{ val }}" {% if checked %}checked{% endif %}/>
+                  <label for="day_{{ val }}">{{ label_text }}</label>
+                </div>
+              {% endfor %}
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              {% for label_text, days in [
+                ('Senin–Jumat', ['0','1','2','3','4']),
+                ('Weekend',     ['5','6']),
+                ('Setiap Hari', ['0','1','2','3','4','5','6'])
+              ] %}
+              <button type="button" class="btn btn-sm"
+                      style="background:rgba(255,255,255,.05);border:1px solid var(--border);
+                             color:var(--text-muted);border-radius:8px;font-size:.72rem;padding:3px 10px"
+                      onclick="setDays({{ days | tojson }})">{{ label_text }}</button>
+              {% endfor %}
+              <button type="button" class="btn btn-sm"
+                      style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);
+                             color:#f87171;border-radius:8px;font-size:.72rem;padding:3px 10px"
+                      onclick="setDays([])">Hapus</button>
+            </div>
+          </div>
+
+          <!-- Submit -->
+          <div class="d-flex flex-column flex-sm-row gap-2">
+            <button type="submit" class="btn btn-primary-grad py-2 flex-fill"
+                    {% if not audios %}disabled{% endif %}>
+              <i class="bi bi-check-lg me-1"></i>
+              {% if schedule %}Simpan Perubahan{% else %}Buat Jadwal{% endif %}
+            </button>
+            <a href="{{ url_for('index') }}"
+               class="btn py-2 flex-fill text-center"
+               style="background:rgba(255,255,255,.05);border:1px solid var(--border);
+                      color:var(--text-muted);border-radius:10px">
+              <i class="bi bi-x me-1"></i>Batal
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  function setDays(vals) {
+    document.querySelectorAll('input[name="days"]').forEach(cb => {
+      cb.checked = vals.includes(cb.value);
+    });
+  }
+</script>
+{% endblock %}
