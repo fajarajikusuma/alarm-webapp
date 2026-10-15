@@ -3,6 +3,7 @@ import uuid
 import subprocess
 import re
 import pytz
+import threading as _threading
 from functools import wraps
 from datetime import datetime
 
@@ -47,6 +48,7 @@ db.init_app(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 login_manager.login_message_category = 'warning'
+login_manager.login_message = 'Silakan login untuk mengakses halaman ini.'
 
 # ---------------------------------------------------------------------------
 # Timezone — WIB (Asia/Jakarta, UTC+7)
@@ -54,20 +56,16 @@ login_manager.login_message_category = 'warning'
 WIB = pytz.timezone('Asia/Jakarta')
 
 # ---------------------------------------------------------------------------
-# APScheduler — pakai timezone WIB agar cron sesuai jam lokal
+# APScheduler
 # ---------------------------------------------------------------------------
 scheduler = BackgroundScheduler(daemon=True, timezone=WIB)
 scheduler.start()
 
 
 # ---------------------------------------------------------------------------
-# Audio device helpers
+# ALSA / Audio helpers
 # ---------------------------------------------------------------------------
 def get_alsa_devices():
-    """
-    Return list of dicts: [{id, name, card, device}]
-    Reads /proc/asound/cards — more reliable than aplay -l in VMs.
-    """
     devices = []
     card_names = {}
     try:
@@ -78,30 +76,18 @@ def get_alsa_devices():
                     card_names[m.group(1)] = m.group(3).strip()
     except Exception:
         pass
-
     usb_card_name = card_names.get('1', 'USB Audio Device')
-    devices.append({
-        'id': 'default',
-        'name': f'USB Audio Device — {usb_card_name}',
-        'card': '1',
-        'device': '0',
-        'note': 'Recommended'
-    })
-
+    devices.append({'id': 'default', 'name': f'USB Audio Device — {usb_card_name}',
+                    'card': '1', 'device': '0', 'note': 'Recommended'})
     for card_num, card_name in card_names.items():
-        devices.append({
-            'id': f'hw:{card_num},0',
-            'name': f'{card_name} (Direct hw:{card_num},0)',
-            'card': card_num,
-            'device': '0',
-            'note': 'Direct (may conflict)'
-        })
-
+        devices.append({'id': f'hw:{card_num},0',
+                        'name': f'{card_name} (Direct hw:{card_num},0)',
+                        'card': card_num, 'device': '0', 'note': 'Direct'})
     return devices
 
 
 def get_current_volume() -> int:
-    """Read actual hardware volume from amixer. Returns 0-100."""
+    """Read hardware volume via amixer. Returns 0-100."""
     try:
         out = subprocess.check_output(
             ['amixer', '-c', '1', 'sget', 'Speaker'],
@@ -116,24 +102,21 @@ def get_current_volume() -> int:
 
 
 def set_hardware_volume(percent: int):
-    """
-    Set USB audio card hardware volume via amixer immediately.
-    percent: 0-100
-    """
+    """Set USB audio volume via amixer. Uses raw value for accuracy."""
     percent = max(0, min(100, percent))
     try:
+        # Use raw value (0-37 for this C-Media chip) for precise control
+        # This avoids rounding issues with percentage-based amixer
+        raw = round(percent / 100 * 37)
         subprocess.run(
-            ['amixer', '-c', '1', 'sset', 'Speaker', f'{percent}%'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=2
+            ['amixer', '-c', '1', 'sset', 'Speaker', str(raw)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
         )
     except Exception as e:
         app.logger.error(f'amixer volume set failed: {e}')
 
 
 def get_settings():
-    """Get or create the singleton AudioSettings row."""
     s = db.session.get(AudioSettings, 1)
     if not s:
         s = AudioSettings(id=1)
@@ -143,22 +126,14 @@ def get_settings():
 
 
 # ---------------------------------------------------------------------------
-# Audio playback — with single-instance enforcement
+# Audio playback — alarm state + test process tracking
 # ---------------------------------------------------------------------------
-import threading as _threading
-
-# ── Test preview process ────────────────────────────────────────────────────
 _test_process: subprocess.Popen | None = None
 _test_process_lock = _threading.Lock()
 
-# ── Alarm (scheduled) process + state ──────────────────────────────────────
-# This is the state broadcast to all browser clients via polling.
 _alarm_state: dict = {
-    'playing':    False,   # is alarm currently sounding?
-    'label':      '',      # schedule label / audio name
-    'time':       '',      # "HH:MM"
-    'started_at': '',      # ISO timestamp WIB
-    'process':    None,    # Popen object
+    'playing': False, 'label': '', 'time': '',
+    'started_at': '', 'process': None,
 }
 _alarm_lock = _threading.Lock()
 
@@ -170,17 +145,14 @@ def _alarm_is_playing() -> bool:
             return False
         if proc.poll() is None:
             return True
-        # Process finished naturally — clear state
         _alarm_state['playing'] = False
         _alarm_state['process'] = None
         return False
 
 
 def _start_alarm(filepath: str, volume: int, label: str, time_str: str):
-    """Start scheduled alarm and record state."""
     global _alarm_state
     with _alarm_lock:
-        # Kill previous alarm if still running
         old = _alarm_state.get('process')
         if old is not None:
             try:
@@ -191,24 +163,20 @@ def _start_alarm(filepath: str, volume: int, label: str, time_str: str):
         try:
             proc = subprocess.Popen(
                 ['mpg123', '-q', filepath],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
         except Exception as e:
             app.logger.error(f'Alarm play error: {e}')
             return
         _alarm_state.update({
-            'playing':    True,
-            'label':      label,
-            'time':       time_str,
+            'playing': True, 'label': label, 'time': time_str,
             'started_at': datetime.now(WIB).strftime('%Y-%m-%dT%H:%M:%S'),
-            'process':    proc,
+            'process': proc,
         })
 
 
 def stop_alarm():
-    """Kill the running alarm process and clear state. Safe to call anytime."""
     global _alarm_state
     with _alarm_lock:
         proc = _alarm_state.get('process')
@@ -221,28 +189,19 @@ def stop_alarm():
                     proc.kill()
                 except Exception:
                     pass
-        _alarm_state.update({
-            'playing': False,
-            'label':   '',
-            'time':    '',
-            'process': None,
-        })
+        _alarm_state.update({'playing': False, 'label': '', 'time': '', 'process': None})
 
 
 def get_alarm_state() -> dict:
-    """Return a JSON-safe snapshot of alarm state."""
     playing = _alarm_is_playing()
     with _alarm_lock:
         return {
-            'playing':    playing,
-            'label':      _alarm_state['label'],
-            'time':       _alarm_state['time'],
-            'started_at': _alarm_state['started_at'],
+            'playing': playing, 'label': _alarm_state['label'],
+            'time': _alarm_state['time'], 'started_at': _alarm_state['started_at'],
         }
 
 
 def _is_test_playing() -> bool:
-    """Return True if a test mpg123 process is currently running."""
     global _test_process
     with _test_process_lock:
         if _test_process is None:
@@ -254,7 +213,6 @@ def _is_test_playing() -> bool:
 
 
 def stop_test_audio():
-    """Kill the running test process if any."""
     global _test_process
     with _test_process_lock:
         if _test_process is not None:
@@ -269,21 +227,7 @@ def stop_test_audio():
             _test_process = None
 
 
-def play_audio(filepath, device='default', volume=80):
-    """Play MP3 via mpg123 — used only by legacy/direct calls."""
-    try:
-        set_hardware_volume(volume)
-        subprocess.Popen(['mpg123', '-q', filepath],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
-    except FileNotFoundError:
-        app.logger.error('mpg123 not found. Install: sudo apt install mpg123')
-    except Exception as e:
-        app.logger.error(f'Error playing audio: {e}')
-
-
 def play_test_audio(filepath, volume=80) -> bool:
-    """Play MP3 for manual test/preview — single-instance enforced."""
     global _test_process
     with _test_process_lock:
         if _test_process is not None and _test_process.poll() is None:
@@ -302,10 +246,6 @@ def play_test_audio(filepath, volume=80) -> bool:
 
 
 def play_audio_with_settings(filepath, schedule_label='', schedule_time=''):
-    """
-    Called by APScheduler for scheduled alarms.
-    Records alarm state so browsers can poll and show modal.
-    """
     with app.app_context():
         s = get_settings()
         _start_alarm(filepath, volume=s.volume,
@@ -328,19 +268,14 @@ def add_scheduler_job(schedule):
     filepath = os.path.join(app.root_path, schedule.audio.filepath)
     days_str = ','.join(str(d) for d in schedule.days_list())
     label = schedule.label or schedule.audio.original_name
-    time_str = schedule.time_display()
     scheduler.add_job(
         func=play_audio_with_settings,
         trigger=CronTrigger(
-            day_of_week=days_str,
-            hour=schedule.time_hour,
-            minute=schedule.time_minute,
-            second=0,
-            timezone=WIB
+            day_of_week=days_str, hour=schedule.time_hour,
+            minute=schedule.time_minute, second=0, timezone=WIB
         ),
-        args=[filepath, label, time_str],
-        id=job_id,
-        replace_existing=True
+        args=[filepath, label, schedule.time_display()],
+        id=job_id, replace_existing=True
     )
 
 
@@ -351,7 +286,7 @@ def remove_scheduler_job(schedule_id):
 
 
 # ---------------------------------------------------------------------------
-# Decorators / helpers
+# Auth helpers & decorators
 # ---------------------------------------------------------------------------
 @login_manager.user_loader
 def load_user(user_id):
@@ -359,16 +294,31 @@ def load_user(user_id):
 
 
 def admin_required(f):
+    """Allow only admin role."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not current_user.is_authenticated or current_user.email != ADMIN_EMAIL:
+        if not current_user.is_authenticated or current_user.role != 'admin':
             abort(403)
         return f(*args, **kwargs)
     return decorated
 
 
+def member_required(f):
+    """Allow any active authenticated user (admin or user)."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated:
+            abort(403)
+        if not current_user.is_active:
+            logout_user()
+            flash('Akun Anda telah dinonaktifkan.', 'danger')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
 def is_admin():
-    return current_user.is_authenticated and current_user.email == ADMIN_EMAIL
+    return current_user.is_authenticated and current_user.role == 'admin'
 
 
 def allowed_file(filename):
@@ -377,18 +327,42 @@ def allowed_file(filename):
 
 app.jinja_env.globals['is_admin'] = is_admin
 
-
 # ---------------------------------------------------------------------------
-# DB + Scheduler init
+# DB init + seed admin + load schedules
 # ---------------------------------------------------------------------------
 with app.app_context():
     db.create_all()
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    # Ensure settings row exists
-    s = db.session.get(AudioSettings, 1)
-    if not s:
+
+    # Ensure AudioSettings singleton
+    if not db.session.get(AudioSettings, 1):
         db.session.add(AudioSettings(id=1))
         db.session.commit()
+
+    # Seed: make sure the ADMIN_EMAIL user has role='admin'
+    if ADMIN_EMAIL:
+        admin_user = User.query.filter_by(email=ADMIN_EMAIL).first()
+        if admin_user and admin_user.role != 'admin':
+            admin_user.role = 'admin'
+            db.session.commit()
+
+    # Migrate: add role/is_active columns to existing users table if missing
+    # (SQLAlchemy doesn't auto-migrate, so we add defaults for existing rows)
+    try:
+        from sqlalchemy import text
+        db.session.execute(text(
+            "UPDATE users SET role='user' WHERE role IS NULL"
+        ))
+        db.session.execute(text(
+            "UPDATE users SET is_active=1 WHERE is_active IS NULL"
+        ))
+        if ADMIN_EMAIL:
+            db.session.execute(text(
+                f"UPDATE users SET role='admin' WHERE email='{ADMIN_EMAIL}'"
+            ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 def load_active_schedules():
@@ -401,7 +375,7 @@ load_active_schedules()
 
 
 # ---------------------------------------------------------------------------
-# Routes — Auth
+# Routes — Authentication
 # ---------------------------------------------------------------------------
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -414,12 +388,15 @@ def register():
         confirm = request.form.get('confirm_password', '')
         if not name or not email or not password:
             flash('Semua kolom wajib diisi.', 'danger')
+        elif len(password) < 6:
+            flash('Password minimal 6 karakter.', 'danger')
         elif password != confirm:
             flash('Password tidak cocok.', 'danger')
         elif User.query.filter_by(email=email).first():
             flash('Email sudah terdaftar.', 'danger')
         else:
-            user = User(name=name, email=email)
+            role = 'admin' if email == ADMIN_EMAIL else 'user'
+            user = User(name=name, email=email, role=role)
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
@@ -437,11 +414,14 @@ def login():
         password = request.form.get('password', '')
         remember = bool(request.form.get('remember'))
         user = User.query.filter_by(email=email).first()
-        if user and user.check_password(password):
+        if not user or not user.check_password(password):
+            flash('Email atau password salah.', 'danger')
+        elif not user.is_active:
+            flash('Akun Anda telah dinonaktifkan. Hubungi admin.', 'danger')
+        else:
             login_user(user, remember=remember)
             flash(f'Selamat datang, {user.name}!', 'success')
             return redirect(request.args.get('next') or url_for('index'))
-        flash('Email atau password salah.', 'danger')
     return render_template('login.html')
 
 
@@ -463,12 +443,14 @@ def index():
     total = Schedule.query.count()
     active = Schedule.query.filter_by(is_active=True).count()
     audio_count = Audio.query.count()
+    user_count = User.query.count()
     return render_template('index.html', schedules=schedules,
-                           total=total, active_count=active, audio_count=audio_count)
+                           total=total, active_count=active,
+                           audio_count=audio_count, user_count=user_count)
 
 
 # ---------------------------------------------------------------------------
-# Routes — Audio Management
+# Routes — Audio Management (admin + user)
 # ---------------------------------------------------------------------------
 @app.route('/audios')
 @login_required
@@ -479,7 +461,7 @@ def audios():
 
 @app.route('/audios/upload', methods=['POST'])
 @login_required
-@admin_required
+@member_required
 def upload_audio():
     if 'file' not in request.files:
         flash('Tidak ada file yang dikirim.', 'danger')
@@ -511,13 +493,15 @@ def upload_audio():
 
 @app.route('/audios/delete/<int:audio_id>', methods=['POST'])
 @login_required
-@admin_required
 def delete_audio(audio_id):
     audio = db.session.get(Audio, audio_id)
     if not audio:
         abort(404)
+    # Admin can delete anyone's audio; user can only delete their own
+    if not is_admin() and audio.uploaded_by != current_user.id:
+        abort(403)
     if Schedule.query.filter_by(audio_id=audio_id).count() > 0:
-        flash('Tidak bisa dihapus: audio ini dipakai oleh jadwal aktif.', 'danger')
+        flash('Tidak bisa dihapus: audio dipakai oleh jadwal aktif.', 'danger')
         return redirect(url_for('audios'))
     if os.path.exists(audio.filepath):
         try:
@@ -532,11 +516,11 @@ def delete_audio(audio_id):
 
 
 # ---------------------------------------------------------------------------
-# Routes — Schedule Management
+# Routes — Schedule Management (admin + user)
 # ---------------------------------------------------------------------------
 @app.route('/schedules/new', methods=['GET', 'POST'])
 @login_required
-@admin_required
+@member_required
 def new_schedule():
     audio_list = Audio.query.order_by(Audio.original_name).all()
     if request.method == 'POST':
@@ -545,24 +529,23 @@ def new_schedule():
         days = request.form.getlist('days')
         label = request.form.get('label', '').strip()
         errors = []
-        if not audio_id:
-            errors.append('Pilih file audio.')
-        if not time_str:
-            errors.append('Tentukan waktu alarm.')
-        if not days:
-            errors.append('Pilih minimal satu hari.')
+        if not audio_id: errors.append('Pilih file audio.')
+        if not time_str: errors.append('Tentukan waktu alarm.')
+        if not days:    errors.append('Pilih minimal satu hari.')
         if errors:
-            for e in errors:
-                flash(e, 'danger')
+            for e in errors: flash(e, 'danger')
             return render_template('schedule_form.html', audios=audio_list, schedule=None)
         try:
             hour, minute = map(int, time_str.split(':'))
         except ValueError:
             flash('Format waktu tidak valid.', 'danger')
             return render_template('schedule_form.html', audios=audio_list, schedule=None)
-        schedule = Schedule(audio_id=audio_id, time_hour=hour, time_minute=minute,
-                            days_of_week=','.join(sorted(set(days))),
-                            label=label or None, is_active=True)
+        schedule = Schedule(
+            audio_id=audio_id, time_hour=hour, time_minute=minute,
+            days_of_week=','.join(sorted(set(days))),
+            label=label or None, is_active=True,
+            created_by=current_user.id
+        )
         db.session.add(schedule)
         db.session.commit()
         add_scheduler_job(schedule)
@@ -573,11 +556,14 @@ def new_schedule():
 
 @app.route('/schedules/edit/<int:schedule_id>', methods=['GET', 'POST'])
 @login_required
-@admin_required
+@member_required
 def edit_schedule(schedule_id):
     schedule = db.session.get(Schedule, schedule_id)
     if not schedule:
         abort(404)
+    # Admin can edit any; user can only edit their own
+    if not is_admin() and schedule.created_by != current_user.id:
+        abort(403)
     audio_list = Audio.query.order_by(Audio.original_name).all()
     if request.method == 'POST':
         audio_id = request.form.get('audio_id', type=int)
@@ -585,15 +571,11 @@ def edit_schedule(schedule_id):
         days = request.form.getlist('days')
         label = request.form.get('label', '').strip()
         errors = []
-        if not audio_id:
-            errors.append('Pilih file audio.')
-        if not time_str:
-            errors.append('Tentukan waktu alarm.')
-        if not days:
-            errors.append('Pilih minimal satu hari.')
+        if not audio_id: errors.append('Pilih file audio.')
+        if not time_str: errors.append('Tentukan waktu alarm.')
+        if not days:    errors.append('Pilih minimal satu hari.')
         if errors:
-            for e in errors:
-                flash(e, 'danger')
+            for e in errors: flash(e, 'danger')
             return render_template('schedule_form.html', audios=audio_list, schedule=schedule)
         try:
             hour, minute = map(int, time_str.split(':'))
@@ -614,11 +596,13 @@ def edit_schedule(schedule_id):
 
 @app.route('/schedules/delete/<int:schedule_id>', methods=['POST'])
 @login_required
-@admin_required
+@member_required
 def delete_schedule(schedule_id):
     schedule = db.session.get(Schedule, schedule_id)
     if not schedule:
         abort(404)
+    if not is_admin() and schedule.created_by != current_user.id:
+        abort(403)
     remove_scheduler_job(schedule_id)
     db.session.delete(schedule)
     db.session.commit()
@@ -645,7 +629,114 @@ def toggle_schedule(schedule_id):
 
 
 # ---------------------------------------------------------------------------
-# Routes — Audio Settings (Output Device + Volume)
+# Routes — User Management (admin only)
+# ---------------------------------------------------------------------------
+@app.route('/users')
+@login_required
+@admin_required
+def users():
+    user_list = User.query.order_by(User.created_at.desc()).all()
+    return render_template('users.html', users=user_list, config_admin_email=ADMIN_EMAIL)
+
+
+@app.route('/users/create', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def create_user():
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        role = request.form.get('role', 'user')
+        if not name or not email or not password:
+            flash('Semua kolom wajib diisi.', 'danger')
+        elif len(password) < 6:
+            flash('Password minimal 6 karakter.', 'danger')
+        elif User.query.filter_by(email=email).first():
+            flash('Email sudah terdaftar.', 'danger')
+        elif role not in ('admin', 'user'):
+            flash('Role tidak valid.', 'danger')
+        else:
+            user = User(name=name, email=email, role=role)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            flash(f'User "{name}" berhasil dibuat.', 'success')
+            return redirect(url_for('users'))
+    return render_template('user_form.html', user=None)
+
+
+@app.route('/users/edit/<int:user_id>', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def edit_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        role = request.form.get('role', 'user')
+        password = request.form.get('password', '').strip()
+        if not name or not email:
+            flash('Nama dan email wajib diisi.', 'danger')
+        elif role not in ('admin', 'user'):
+            flash('Role tidak valid.', 'danger')
+        elif User.query.filter(User.email == email, User.id != user_id).first():
+            flash('Email sudah digunakan oleh user lain.', 'danger')
+        else:
+            user.name = name
+            user.email = email
+            user.role = role
+            if password:
+                if len(password) < 6:
+                    flash('Password minimal 6 karakter.', 'danger')
+                    return render_template('user_form.html', user=user)
+                user.set_password(password)
+            db.session.commit()
+            flash(f'User "{name}" berhasil diperbarui.', 'success')
+            return redirect(url_for('users'))
+    return render_template('user_form.html', user=user)
+
+
+@app.route('/users/toggle/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required
+def toggle_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
+    if user.email == ADMIN_EMAIL:
+        flash('Tidak bisa menonaktifkan akun admin utama.', 'danger')
+        return redirect(url_for('users'))
+    user.is_active = not user.is_active
+    db.session.commit()
+    status = 'diaktifkan' if user.is_active else 'dinonaktifkan'
+    flash(f'User "{user.name}" {status}.', 'success' if user.is_active else 'warning')
+    return redirect(url_for('users'))
+
+
+@app.route('/users/delete/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required
+def delete_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
+    if user.email == ADMIN_EMAIL:
+        flash('Tidak bisa menghapus akun admin utama.', 'danger')
+        return redirect(url_for('users'))
+    if user.id == current_user.id:
+        flash('Tidak bisa menghapus akun sendiri.', 'danger')
+        return redirect(url_for('users'))
+    db.session.delete(user)
+    db.session.commit()
+    flash(f'User "{user.name}" dihapus.', 'success')
+    return redirect(url_for('users'))
+
+
+# ---------------------------------------------------------------------------
+# Routes — Audio Settings (admin only)
 # ---------------------------------------------------------------------------
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
@@ -653,12 +744,10 @@ def toggle_schedule(schedule_id):
 def audio_settings():
     settings = get_settings()
     devices = get_alsa_devices()
-    # Always sync DB volume with actual hardware on page load
     hw_volume = get_current_volume()
     if settings.volume != hw_volume:
         settings.volume = hw_volume
         db.session.commit()
-
     if request.method == 'POST':
         device_id = request.form.get('output_device', 'default')
         device_label = request.form.get('device_label', 'Default Output')
@@ -678,85 +767,66 @@ def audio_settings():
 @login_required
 @admin_required
 def set_volume_realtime():
-    """
-    Realtime volume endpoint — called on every slider move.
-    Sets hardware volume immediately via amixer, saves to DB.
-    """
     data = request.get_json(silent=True) or {}
     volume = max(0, min(100, int(data.get('volume', 80))))
     set_hardware_volume(volume)
-    # Persist to DB
     settings = get_settings()
     settings.volume = volume
     db.session.commit()
-    # Read back actual hardware value to confirm
-    actual = get_current_volume()
-    return jsonify({'ok': True, 'volume': actual})
+    # Return the requested volume directly (amixer may need a tick to settle)
+    return jsonify({'ok': True, 'volume': volume})
 
 
 @app.route('/settings/test', methods=['POST'])
 @login_required
 @admin_required
 def test_audio():
-    """Start test playback. Rejects if already playing."""
     if _is_test_playing():
         return jsonify({'ok': False, 'busy': True,
-                        'msg': 'Sedang memutar audio. Stop dulu sebelum test baru.'})
-
+                        'msg': 'Sedang memutar. Stop dulu sebelum test baru.'})
     data = request.get_json(silent=True) or {}
     volume = max(0, min(100, int(data.get('volume', 80))))
-
     audio = Audio.query.first()
     if not audio:
-        return jsonify({'ok': False, 'busy': False,
-                        'msg': 'Belum ada file audio. Upload MP3 terlebih dahulu.'})
-
+        return jsonify({'ok': False, 'busy': False, 'msg': 'Belum ada file audio.'})
     filepath = os.path.join(app.root_path, audio.filepath)
     if not os.path.exists(filepath):
-        return jsonify({'ok': False, 'busy': False,
-                        'msg': 'File audio tidak ditemukan di server.'})
-
+        return jsonify({'ok': False, 'busy': False, 'msg': 'File audio tidak ditemukan.'})
     started = play_test_audio(filepath, volume=volume)
     if started:
         return jsonify({'ok': True, 'playing': True,
-                        'msg': f'Memutar "{audio.original_name}" — volume {volume}%'})
-    else:
-        return jsonify({'ok': False, 'busy': True,
-                        'msg': 'Sedang memutar audio. Stop dulu sebelum test baru.'})
+                        'msg': f'Memutar "{audio.original_name}" — {volume}%'})
+    return jsonify({'ok': False, 'busy': True, 'msg': 'Sedang memutar audio.'})
 
 
 @app.route('/settings/stop', methods=['POST'])
 @login_required
 @admin_required
 def stop_test():
-    """Stop the currently playing test audio."""
     if _is_test_playing():
         stop_test_audio()
         return jsonify({'ok': True, 'playing': False, 'msg': 'Playback dihentikan.'})
-    return jsonify({'ok': True, 'playing': False, 'msg': 'Tidak ada audio yang sedang diputar.'})
+    return jsonify({'ok': True, 'playing': False, 'msg': 'Tidak ada yang sedang diputar.'})
 
 
 @app.route('/settings/status', methods=['GET'])
 @login_required
 @admin_required
 def test_status():
-    """Polling endpoint — returns whether test audio is currently playing."""
     return jsonify({'playing': _is_test_playing()})
 
 
 # ---------------------------------------------------------------------------
-# API — alarm state (polling by all browser clients)
+# API
 # ---------------------------------------------------------------------------
 @app.route('/api/alarm/state')
 def api_alarm_state():
-    """Returns current alarm state — polled by every open browser tab."""
     return jsonify(get_alarm_state())
 
 
 @app.route('/api/alarm/stop', methods=['POST'])
 @login_required
 def api_alarm_stop():
-    """Stop the currently ringing alarm."""
     stop_alarm()
     return jsonify({'ok': True, 'playing': False})
 
@@ -765,28 +835,23 @@ def api_alarm_stop():
 @login_required
 @admin_required
 def api_alarm_test_fire():
-    """Dev endpoint: fire a test alarm immediately to verify modal."""
     audio = Audio.query.first()
     if not audio:
         return jsonify({'ok': False, 'msg': 'No audio'})
     filepath = os.path.join(app.root_path, audio.filepath)
     _start_alarm(filepath, volume=80,
-                 label='TEST MODAL — ' + audio.original_name,
+                 label=audio.original_name,
                  time_str=datetime.now(WIB).strftime('%H:%M'))
     return jsonify({'ok': True, 'msg': 'Alarm fired'})
 
 
-# ---------------------------------------------------------------------------
-# API — server time (WIB)
-# ---------------------------------------------------------------------------
 @app.route('/api/time')
 def api_time():
     now_wib = datetime.now(WIB)
-    jobs = scheduler.get_jobs()
     next_alarms = []
-    for j in jobs:
+    for j in scheduler.get_jobs():
         if j.next_run_time:
-            next_alarms.append(j.next_run_time.astimezone(WIB).strftime('%H:%M %a'))
+            next_alarms.append(j.next_run_time.astimezone(WIB).strftime('%H:%M'))
     return jsonify({
         'time': now_wib.strftime('%H:%M:%S'),
         'date': now_wib.strftime('%A, %d %B %Y'),
@@ -795,9 +860,6 @@ def api_time():
     })
 
 
-# ---------------------------------------------------------------------------
-# API — get audio devices (for dynamic refresh)
-# ---------------------------------------------------------------------------
 @app.route('/api/devices')
 @login_required
 @admin_required

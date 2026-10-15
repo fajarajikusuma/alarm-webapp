@@ -1,16 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Register — Web Alarm{% endblock %}
-
 {% block content %}
-<div class="row justify-content-center" style="margin-top:2.5rem">
-  <div class="col-12 col-sm-8 col-md-6 col-lg-4 col-xl-3">
-    <div class="auth-card">
-      <div class="auth-header">
-        <div class="auth-logo"><i class="bi bi-person-plus-fill"></i></div>
-        <h5 class="mb-1" style="color:#fff;font-size:1.05rem">Buat Akun</h5>
-        <p style="color:var(--text-muted);font-size:.78rem;margin:0">Web Alarm System</p>
+
+<div class="row justify-content-center" style="margin-top:3rem">
+  <div class="col-12 col-sm-9 col-md-6 col-lg-4">
+    <div class="card shadow-sm overflow-hidden">
+      <div class="text-center py-4 px-3"
+           style="background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(139,92,246,.1));
+                  border-bottom:1px solid var(--bs-border-color)">
+        <div class="d-inline-flex align-items-center justify-content-center mb-3"
+             style="width:52px;height:52px;border-radius:14px;
+                    background:linear-gradient(135deg,var(--accent),var(--accent2));
+                    font-size:1.4rem;color:#fff">
+          <i class="bi bi-person-plus-fill"></i>
+        </div>
+        <h5 class="fw-bold mb-1">Buat Akun</h5>
+        <p class="text-secondary mb-0" style="font-size:.8rem">Web Alarm System</p>
       </div>
-      <div class="p-3 p-sm-4">
+
+      <div class="card-body p-4">
         <form method="post" novalidate>
           <div class="mb-3">
             <label class="form-label">Nama Lengkap</label>
@@ -33,7 +41,7 @@
             <div class="input-group">
               <span class="input-group-text"><i class="bi bi-lock"></i></span>
               <input type="password" class="form-control" name="password"
-                     placeholder="Min. 8 karakter" required minlength="8"
+                     placeholder="Min. 6 karakter" required minlength="6"
                      autocomplete="new-password"/>
             </div>
           </div>
@@ -45,16 +53,19 @@
                      placeholder="Ulangi password" required autocomplete="new-password"/>
             </div>
           </div>
-          <button type="submit" class="btn btn-primary-grad w-100 py-2">
+          <button type="submit" class="btn btn-grad w-100 py-2">
             <i class="bi bi-person-check-fill me-2"></i>Daftar Sekarang
           </button>
         </form>
       </div>
-      <div class="text-center pb-3" style="font-size:.8rem;color:var(--text-muted)">
+
+      <div class="card-footer text-center py-3" style="font-size:.83rem">
         Sudah punya akun?
-        <a href="{{ url_for('login') }}" style="color:#818cf8;font-weight:600">Login</a>
+        <a href="{{ url_for('login') }}" class="fw-semibold text-decoration-none"
+           style="color:var(--accent)">Login</a>
       </div>
     </div>
   </div>
 </div>
+
 {% endblock %}

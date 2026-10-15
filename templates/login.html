@@ -1,16 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Login — Web Alarm{% endblock %}
-
 {% block content %}
-<div class="row justify-content-center" style="margin-top:2.5rem">
-  <div class="col-12 col-sm-8 col-md-6 col-lg-4 col-xl-3">
-    <div class="auth-card">
-      <div class="auth-header">
-        <div class="auth-logo"><i class="bi bi-alarm-fill"></i></div>
-        <h5 class="mb-1 fw-700" style="color:#fff;font-size:1.05rem">Selamat Datang</h5>
-        <p style="color:var(--text-muted);font-size:.78rem;margin:0">Web Alarm System</p>
+
+<div class="row justify-content-center" style="margin-top:3rem">
+  <div class="col-12 col-sm-8 col-md-6 col-lg-4">
+    <div class="card shadow-sm overflow-hidden">
+      <!-- Header gradient -->
+      <div class="text-center py-4 px-3"
+           style="background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(139,92,246,.1));
+                  border-bottom:1px solid var(--bs-border-color)">
+        <div class="d-inline-flex align-items-center justify-content-center mb-3"
+             style="width:52px;height:52px;border-radius:14px;
+                    background:linear-gradient(135deg,var(--accent),var(--accent2));
+                    font-size:1.4rem;color:#fff">
+          <i class="bi bi-alarm-fill"></i>
+        </div>
+        <h5 class="fw-bold mb-1">Selamat Datang</h5>
+        <p class="text-secondary mb-0" style="font-size:.8rem">Web Alarm System</p>
       </div>
-      <div class="p-3 p-sm-4">
+
+      <div class="card-body p-4">
         <form method="post" novalidate>
           <div class="mb-3">
             <label class="form-label">Email</label>
@@ -30,19 +39,23 @@
           </div>
           <div class="mb-4 form-check ms-1">
             <input type="checkbox" class="form-check-input" id="remember" name="remember"/>
-            <label class="form-check-label" for="remember"
-                   style="font-size:.82rem;color:var(--text-muted)">Ingat saya</label>
+            <label class="form-check-label text-secondary" for="remember" style="font-size:.85rem">
+              Ingat saya
+            </label>
           </div>
-          <button type="submit" class="btn btn-primary-grad w-100 py-2">
+          <button type="submit" class="btn btn-grad w-100 py-2">
             <i class="bi bi-box-arrow-in-right me-2"></i>Login
           </button>
         </form>
       </div>
-      <div class="text-center pb-3" style="font-size:.8rem;color:var(--text-muted)">
+
+      <div class="card-footer text-center py-3" style="font-size:.83rem">
         Belum punya akun?
-        <a href="{{ url_for('register') }}" style="color:#818cf8;font-weight:600">Daftar</a>
+        <a href="{{ url_for('register') }}" class="fw-semibold text-decoration-none"
+           style="color:var(--accent)">Daftar</a>
       </div>
     </div>
   </div>
 </div>
+
 {% endblock %}

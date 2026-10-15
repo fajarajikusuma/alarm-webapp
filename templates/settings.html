@@ -1,416 +1,274 @@
 {% extends "base.html" %}
 {% block title %}Audio Output — Web Alarm{% endblock %}
-
 {% block content %}
-<div class="page-header">
-  <h1><i class="bi bi-speaker-fill me-2" style="color:#818cf8"></i>Audio Output</h1>
-  <div class="subtitle">Pilih perangkat output dan atur volume alarm</div>
+
+<div class="mb-4">
+  <h1 class="pg-title"><i class="bi bi-speaker-fill me-2 text-primary"></i>Audio Output</h1>
+  <p class="pg-sub mb-0">Konfigurasi perangkat output dan volume alarm</p>
 </div>
 
-<div class="row g-4">
+<div class="row g-3">
   <!-- Left: Settings form -->
   <div class="col-12 col-lg-7">
     <div class="card">
       <div class="card-header">
-        <i class="bi bi-sliders me-2" style="color:#818cf8"></i>Pengaturan Output
+        <i class="bi bi-sliders me-2 text-primary"></i>Pengaturan Output
       </div>
-      <div class="p-4">
+      <div class="card-body p-4">
         <form method="post" id="settingsForm">
 
-          <!-- Output Device -->
+          <!-- Device selection -->
           <div class="mb-4">
             <label class="form-label"><i class="bi bi-display me-1"></i>Perangkat Output</label>
-            <div id="deviceList" class="d-flex flex-column gap-2">
+            <div class="d-flex flex-column gap-2">
               {% for dev in devices %}
-              <label class="device-option {% if settings.output_device == dev.id %}selected{% endif %}"
-                     data-device-id="{{ dev.id }}"
-                     data-device-label="{{ dev.name }}">
+              <label class="dev-option {% if settings.output_device == dev.id %}selected{% endif %}"
+                     data-device-id="{{ dev.id }}" data-device-label="{{ dev.name }}">
                 <input type="radio" name="output_device" value="{{ dev.id }}"
                        {% if settings.output_device == dev.id %}checked{% endif %}
                        style="display:none"/>
                 <div class="d-flex align-items-center gap-3">
-                  <span class="dev-icon">
-                    {% if 'usb' in dev.name.lower() %}
-                      <i class="bi bi-usb-symbol"></i>
-                    {% elif 'hdmi' in dev.name.lower() or 'display' in dev.name.lower() %}
-                      <i class="bi bi-display"></i>
-                    {% elif 'speaker' in dev.name.lower() or 'realtek' in dev.name.lower() %}
-                      <i class="bi bi-speaker-fill"></i>
-                    {% else %}
-                      <i class="bi bi-volume-up-fill"></i>
-                    {% endif %}
+                  <span class="stat-icon si-indigo flex-shrink-0" style="width:36px;height:36px">
+                    {% if 'usb' in dev.name.lower() %}<i class="bi bi-usb-symbol"></i>
+                    {% elif 'display' in dev.name.lower() %}<i class="bi bi-display"></i>
+                    {% else %}<i class="bi bi-speaker-fill"></i>{% endif %}
                   </span>
                   <div class="flex-fill">
-                    <div class="d-flex align-items-center gap-2">
-                      <div class="dev-name">{{ dev.name }}</div>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                      <span class="fw-semibold" style="font-size:.85rem">{{ dev.name }}</span>
                       {% if dev.get('note') == 'Recommended' %}
-                        <span style="font-size:.65rem;background:rgba(34,197,94,.15);color:#4ade80;
-                                     border:1px solid rgba(34,197,94,.3);border-radius:20px;
-                                     padding:1px 7px;font-weight:600">✓ Recommended</span>
+                        <span class="badge text-bg-success" style="font-size:.65rem">✓ Recommended</span>
                       {% endif %}
                     </div>
-                    <div class="dev-id">{{ dev.id }}</div>
+                    <small class="text-secondary font-monospace">{{ dev.id }}</small>
                   </div>
-                  <span class="dev-check ms-auto"><i class="bi bi-check-circle-fill"></i></span>
+                  <i class="bi bi-check-circle-fill dev-check flex-shrink-0"></i>
                 </div>
               </label>
               {% endfor %}
             </div>
-            <!-- Hidden label field -->
             <input type="hidden" name="device_label" id="deviceLabelInput"
                    value="{{ settings.device_label }}"/>
           </div>
 
-          <!-- Volume -->
+          <!-- Volume slider -->
           <div class="mb-4">
-            <label class="form-label">
-              <i class="bi bi-volume-up me-1"></i>Volume
-              <span class="ms-2" id="volLabel"
-                    style="color:#818cf8;font-size:1rem;font-weight:700;
-                           text-transform:none;letter-spacing:0">{{ settings.volume }}%</span>
-              <span id="volStatus" style="margin-left:8px;font-size:.85rem;font-weight:700;
-                    min-width:16px;display:inline-block;transition:color .3s"></span>
-            </label>
-            <div class="d-flex align-items-center gap-3 mt-2">
-              <i class="bi bi-volume-mute" style="color:rgba(255,255,255,.3);font-size:1.1rem"></i>
-              <input type="range" class="volume-slider flex-fill" name="volume"
-                     id="volumeSlider" min="0" max="100" value="{{ settings.volume }}"/>
-              <i class="bi bi-volume-up-fill" style="color:rgba(255,255,255,.3);font-size:1.1rem"></i>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <label class="form-label mb-0">
+                <i class="bi bi-volume-up me-1"></i>Volume
+              </label>
+              <div class="d-flex align-items-center gap-2">
+                <span id="volLabel" class="fw-bold font-monospace"
+                      style="font-size:1.1rem;color:#818cf8">{{ settings.volume }}%</span>
+                <span id="volStatus" class="fw-bold" style="min-width:16px;font-size:.85rem"></span>
+              </div>
             </div>
-            <!-- Volume bar visual -->
-            <div class="mt-2" style="background:rgba(255,255,255,.07);border-radius:4px;height:4px;overflow:hidden">
-              <div id="volBar" style="height:100%;border-radius:4px;
-                                     background:linear-gradient(90deg,#6366f1,#a855f7);
-                                     width:{{ settings.volume }}%;transition:width .1s"></div>
+            <div class="d-flex align-items-center gap-3">
+              <i class="bi bi-volume-mute text-secondary"></i>
+              <input type="range" class="flex-fill" name="volume" id="volumeSlider"
+                     min="0" max="100" step="1" value="{{ settings.volume }}"/>
+              <i class="bi bi-volume-up text-secondary"></i>
+            </div>
+            <!-- Progress bar -->
+            <div class="mt-2 rounded" style="height:4px;background:var(--bs-border-color);overflow:hidden">
+              <div id="volBar"
+                   style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+                          border-radius:4px;width:{{ settings.volume }}%;transition:width .08s"></div>
             </div>
           </div>
 
-          <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary-grad flex-fill py-2">
-              <i class="bi bi-check-lg me-1"></i>Simpan Pengaturan
-            </button>
-          </div>
+          <button type="submit" class="btn btn-grad w-100 py-2">
+            <i class="bi bi-check-lg me-1"></i>Simpan Pengaturan
+          </button>
         </form>
       </div>
     </div>
   </div>
 
-  <!-- Right: Test panel -->
+  <!-- Right: Test + Info -->
   <div class="col-12 col-lg-5">
-    <!-- Test Sound -->
+    <!-- Test sound -->
     <div class="card mb-3">
       <div class="card-header">
-        <i class="bi bi-play-circle me-2" style="color:#4ade80"></i>Tes Suara
+        <i class="bi bi-play-circle me-2 text-success"></i>Tes Suara
       </div>
-      <div class="p-4">
-        <p style="font-size:.85rem;color:rgba(255,255,255,.45);margin-bottom:1.5rem">
-          Klik tombol di bawah untuk memutar audio pertama yang tersedia
-          melalui perangkat yang dipilih dengan volume saat ini.
+      <div class="card-body p-4">
+        <p class="text-secondary mb-3" style="font-size:.85rem">
+          Putar audio pertama yang tersedia melalui perangkat dan volume yang dipilih.
         </p>
-
-        <!-- Visual equalizer (animates when testing) -->
-        <div class="eq-bars mb-4" id="eqBars">
+        <!-- EQ animation -->
+        <div class="eq-bars mb-3" id="eqBars">
           <span></span><span></span><span></span><span></span>
           <span></span><span></span><span></span><span></span>
         </div>
-
         <!-- Play button -->
-        <button type="button" class="btn btn-primary-grad w-100 py-2 mb-2" id="testBtn">
-          <i class="bi bi-play-fill me-2"></i>Test Bunyi Sekarang
+        <button type="button" class="btn btn-grad w-100 py-2 mb-2" id="testBtn">
+          <i class="bi bi-play-fill me-2"></i>Test Bunyi
         </button>
-        <!-- Stop button (hidden by default) -->
-        <button type="button"
-                class="btn w-100 py-2"
-                id="stopBtn"
-                style="display:none;background:rgba(239,68,68,.15);
-                       border:1px solid rgba(239,68,68,.3);
-                       color:#f87171;border-radius:10px;font-weight:600">
+        <!-- Stop button -->
+        <button type="button" id="stopBtn"
+                class="btn btn-danger w-100 py-2" style="display:none">
           <i class="bi bi-stop-fill me-2"></i>Stop
         </button>
-
-        <div id="testResult" class="mt-3" style="display:none;font-size:.82rem;
-             border-radius:10px;padding:.6rem .9rem"></div>
+        <div id="testResult" class="mt-2 rounded p-2"
+             style="display:none;font-size:.82rem"></div>
       </div>
     </div>
 
-    <!-- Current config summary -->
+    <!-- Active config summary -->
     <div class="card">
       <div class="card-header">
-        <i class="bi bi-info-circle me-2" style="color:#60a5fa"></i>Konfigurasi Aktif
+        <i class="bi bi-info-circle me-2 text-info"></i>Konfigurasi Aktif
       </div>
-      <div class="p-4">
-        <div class="config-row">
-          <span class="config-key">Perangkat</span>
-          <span class="config-val" id="summaryDevice">{{ settings.device_label }}</span>
-        </div>
-        <div class="config-row">
-          <span class="config-key">Device ID</span>
-          <span class="config-val" id="summaryDeviceId"
-                style="font-family:monospace;font-size:.8rem;color:#818cf8">
-            {{ settings.output_device }}
-          </span>
-        </div>
-        <div class="config-row">
-          <span class="config-key">Volume</span>
-          <div style="flex:1;display:flex;align-items:center;gap:8px">
-            <div style="flex:1;height:6px;background:rgba(255,255,255,.08);
-                        border-radius:3px;overflow:hidden">
-              <div id="summaryVolBar"
-                   style="height:100%;background:linear-gradient(90deg,#6366f1,#a855f7);
-                          border-radius:3px;width:{{ settings.volume }}%;transition:width .2s"></div>
-            </div>
-            <span class="config-val" id="summaryVol">{{ settings.volume }}%</span>
-          </div>
-        </div>
+      <div class="card-body p-3">
+        <table class="table table-sm mb-0" style="font-size:.82rem">
+          <tr>
+            <td class="text-secondary border-0 ps-0" style="width:90px">Perangkat</td>
+            <td class="fw-semibold border-0" id="summaryDevice">{{ settings.device_label }}</td>
+          </tr>
+          <tr>
+            <td class="text-secondary ps-0">Device ID</td>
+            <td class="font-monospace border-0" id="summaryDeviceId"
+                style="color:#818cf8">{{ settings.output_device }}</td>
+          </tr>
+          <tr>
+            <td class="text-secondary ps-0">Volume</td>
+            <td class="border-0">
+              <div class="d-flex align-items-center gap-2">
+                <div class="flex-fill rounded" style="height:5px;background:var(--bs-border-color);overflow:hidden">
+                  <div id="summaryVolBar"
+                       style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+                              border-radius:4px;width:{{ settings.volume }}%;transition:width .2s"></div>
+                </div>
+                <span id="summaryVol" class="fw-bold font-monospace" style="font-size:.82rem;white-space:nowrap">
+                  {{ settings.volume }}%
+                </span>
+              </div>
+            </td>
+          </tr>
+        </table>
       </div>
     </div>
   </div>
 </div>
-{% endblock %}
 
-{% block extra_head %}
-<style>
-  /* Device option cards */
-  .device-option {
-    display: block;
-    padding: .85rem 1rem;
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,.08);
-    cursor: pointer;
-    transition: all .2s;
-    background: rgba(255,255,255,.02);
-  }
-  .device-option:hover { border-color: rgba(99,102,241,.4); background: rgba(99,102,241,.05); }
-  .device-option.selected { border-color: #6366f1; background: rgba(99,102,241,.12); }
-  .dev-icon {
-    width: 40px; height: 40px;
-    border-radius: 10px;
-    background: rgba(99,102,241,.15);
-    color: #818cf8;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.1rem; flex-shrink: 0;
-  }
-  .device-option.selected .dev-icon { background: rgba(99,102,241,.3); }
-  .dev-name { font-weight: 500; color: #e2e8f0; font-size: .875rem; }
-  .dev-id { font-size: .72rem; color: rgba(255,255,255,.35); font-family: monospace; }
-  .dev-check { color: #6366f1; font-size: 1.1rem; opacity: 0; transition: opacity .2s; }
-  .device-option.selected .dev-check { opacity: 1; }
-
-  /* Config summary rows */
-  .config-row {
-    display: flex; align-items: center; gap: 12px;
-    padding: .6rem 0;
-    border-bottom: 1px solid rgba(255,255,255,.05);
-  }
-  .config-row:last-child { border-bottom: none; }
-  .config-key { font-size: .75rem; color: rgba(255,255,255,.4); width: 80px; flex-shrink: 0; }
-  .config-val { font-size: .85rem; color: #e2e8f0; font-weight: 500; }
-
-  /* Equalizer animation */
-  .eq-bars {
-    display: flex; align-items: flex-end; justify-content: center;
-    gap: 5px; height: 40px;
-  }
-  .eq-bars span {
-    width: 6px; border-radius: 3px;
-    background: linear-gradient(180deg, #a855f7, #6366f1);
-    height: 8px; transition: height .1s;
-  }
-  .eq-bars.playing span:nth-child(1) { animation: eq 0.6s 0.0s infinite alternate; }
-  .eq-bars.playing span:nth-child(2) { animation: eq 0.6s 0.1s infinite alternate; }
-  .eq-bars.playing span:nth-child(3) { animation: eq 0.6s 0.2s infinite alternate; }
-  .eq-bars.playing span:nth-child(4) { animation: eq 0.6s 0.3s infinite alternate; }
-  .eq-bars.playing span:nth-child(5) { animation: eq 0.6s 0.15s infinite alternate; }
-  .eq-bars.playing span:nth-child(6) { animation: eq 0.6s 0.25s infinite alternate; }
-  .eq-bars.playing span:nth-child(7) { animation: eq 0.6s 0.05s infinite alternate; }
-  .eq-bars.playing span:nth-child(8) { animation: eq 0.6s 0.35s infinite alternate; }
-  @keyframes eq {
-    from { height: 4px; }
-    to   { height: 38px; }
-  }
-</style>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  // ── Volume slider — REALTIME ──────────────────────────────
-  const slider = document.getElementById('volumeSlider');
-  const volLabel = document.getElementById('volLabel');
-  const volBar = document.getElementById('volBar');
-  const summaryVol = document.getElementById('summaryVol');
-  const summaryVolBar = document.getElementById('summaryVolBar');
-  const volStatus = document.getElementById('volStatus');
-  let volDebounce = null;
-
-  function updateVolUI(v) {
-    volLabel.textContent = v + '%';
-    volBar.style.width = v + '%';
-    summaryVol.textContent = v + '%';
-    summaryVolBar.style.width = v + '%';
-  }
-
-  function applyVolume(v) {
-    // Show sending indicator
-    volStatus.textContent = '↑';
-    volStatus.style.color = '#facc15';
-
-    fetch('{{ url_for("set_volume_realtime") }}', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ volume: parseInt(v) })
-    })
-    .then(r => r.json())
-    .then(data => {
-      updateVolUI(data.volume);
-      volStatus.textContent = '✓';
-      volStatus.style.color = '#4ade80';
-      setTimeout(() => { volStatus.textContent = ''; }, 1200);
-    })
-    .catch(() => {
-      volStatus.textContent = '✗';
-      volStatus.style.color = '#f87171';
-    });
-  }
-
-  slider.addEventListener('input', function() {
-    updateVolUI(this.value);
-    // Debounce: send to server 120ms after user stops moving
-    clearTimeout(volDebounce);
-    volDebounce = setTimeout(() => applyVolume(this.value), 120);
-  });
-
-  // ── Device selection ───────────────────────────────────────
-  document.querySelectorAll('.device-option').forEach(opt => {
+  // ── Device selection ───────────────────────
+  document.querySelectorAll('.dev-option').forEach(opt => {
     opt.addEventListener('click', function() {
-      document.querySelectorAll('.device-option').forEach(o => o.classList.remove('selected'));
+      document.querySelectorAll('.dev-option').forEach(o => o.classList.remove('selected'));
       this.classList.add('selected');
       this.querySelector('input[type=radio]').checked = true;
       document.getElementById('deviceLabelInput').value = this.dataset.deviceLabel;
-      document.getElementById('summaryDevice').textContent = this.dataset.deviceLabel;
-      document.getElementById('summaryDeviceId').textContent = this.dataset.deviceId;
+      document.getElementById('summaryDevice').textContent    = this.dataset.deviceLabel;
+      document.getElementById('summaryDeviceId').textContent  = this.dataset.deviceId;
     });
   });
 
-  // ── Play / Stop logic ──────────────────────────────────────
-  const testBtn  = document.getElementById('testBtn');
-  const stopBtn  = document.getElementById('stopBtn');
-  const eq       = document.getElementById('eqBars');
-  const result   = document.getElementById('testResult');
-  let pollTimer  = null;
+  // ── Volume slider realtime ─────────────────
+  const slider  = document.getElementById('volumeSlider');
+  const volLbl  = document.getElementById('volLabel');
+  const volBar  = document.getElementById('volBar');
+  const sumVol  = document.getElementById('summaryVol');
+  const sumBar  = document.getElementById('summaryVolBar');
+  const volSt   = document.getElementById('volStatus');
+  let   debounce = null;
 
-  function setPlaying(playing) {
-    if (playing) {
-      testBtn.style.display = 'none';
-      stopBtn.style.display = 'block';
-      eq.classList.add('playing');
-    } else {
-      testBtn.style.display = 'block';
-      stopBtn.style.display = 'none';
-      eq.classList.remove('playing');
-      testBtn.disabled = false;
-      testBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Test Bunyi Sekarang';
-    }
+  function setVolUI(v) {
+    volLbl.textContent = v + '%';
+    volBar.style.width = v + '%';
+    sumVol.textContent = v + '%';
+    sumBar.style.width = v + '%';
+  }
+
+  function sendVolume(v) {
+    volSt.textContent = '↑'; volSt.style.color = '#fbbf24';
+    fetch('{{ url_for("set_volume_realtime") }}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({volume: parseInt(v)})
+    })
+    .then(r => r.json())
+    .then(d => {
+      setVolUI(d.volume);
+      volSt.textContent = '✓'; volSt.style.color = '#34d399';
+      setTimeout(() => { volSt.textContent = ''; }, 1500);
+    })
+    .catch(() => { volSt.textContent = '✗'; volSt.style.color = '#f87171'; });
+  }
+
+  slider.addEventListener('input', function() {
+    setVolUI(this.value);
+    clearTimeout(debounce);
+    debounce = setTimeout(() => sendVolume(this.value), 150);
+  });
+
+  // ── Test audio play/stop ───────────────────
+  const testBtn = document.getElementById('testBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const eq      = document.getElementById('eqBars');
+  const result  = document.getElementById('testResult');
+  let   poll    = null;
+
+  function setPlaying(p) {
+    testBtn.style.display = p ? 'none' : 'block';
+    stopBtn.style.display = p ? 'block' : 'none';
+    p ? eq.classList.add('playing') : eq.classList.remove('playing');
+    testBtn.disabled = false;
+    testBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Test Bunyi';
   }
 
   function showResult(ok, msg) {
     result.style.display = 'block';
-    if (ok) {
-      result.style.background  = 'rgba(34,197,94,.1)';
-      result.style.color       = '#4ade80';
-      result.style.borderLeft  = '3px solid #22c55e';
-    } else {
-      result.style.background  = 'rgba(239,68,68,.1)';
-      result.style.color       = '#f87171';
-      result.style.borderLeft  = '3px solid #ef4444';
-    }
-    result.innerHTML = '<i class="bi bi-' + (ok ? 'check-circle' : 'exclamation-triangle') + ' me-2"></i>' + msg;
+    result.className = 'mt-2 rounded p-2 ' + (ok ? 'alert alert-success' : 'alert alert-danger');
+    result.style.fontSize = '.82rem';
+    result.innerHTML = msg;
   }
 
-  // Poll server every 1.5 s to check if playback finished naturally
-  function startPolling() {
-    stopPolling();
-    pollTimer = setInterval(() => {
-      fetch('{{ url_for("test_status") }}')
-        .then(r => r.json())
-        .then(data => {
-          if (!data.playing) {
-            setPlaying(false);
-            stopPolling();
-            showResult(true, 'Selesai diputar.');
-          }
-        })
-        .catch(() => { stopPolling(); setPlaying(false); });
+  function startPoll() {
+    if (poll) clearInterval(poll);
+    poll = setInterval(() => {
+      fetch('{{ url_for("test_status") }}').then(r => r.json()).then(d => {
+        if (!d.playing) { setPlaying(false); clearInterval(poll); showResult(true, 'Selesai diputar.'); }
+      }).catch(() => { clearInterval(poll); setPlaying(false); });
     }, 1500);
   }
 
-  function stopPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  }
-
-  // ── Play button ────────────────────────────────────────────
   testBtn.addEventListener('click', function() {
-    const volume = slider.value;
     testBtn.disabled = true;
     testBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Memulai…';
     result.style.display = 'none';
-
     fetch('{{ url_for("test_audio") }}', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ volume: parseInt(volume) })
+      body: JSON.stringify({volume: parseInt(slider.value)})
     })
     .then(r => r.json())
-    .then(data => {
-      if (data.ok) {
-        setPlaying(true);
-        showResult(true, data.msg);
-        startPolling();
-      } else if (data.busy) {
-        // Already playing — snap UI to playing state
-        setPlaying(true);
-        showResult(false, data.msg);
-        startPolling();
-      } else {
-        testBtn.disabled = false;
-        testBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Test Bunyi Sekarang';
-        showResult(false, data.msg);
-      }
+    .then(d => {
+      if (d.ok) { setPlaying(true); showResult(true, d.msg); startPoll(); }
+      else if (d.busy) { setPlaying(true); showResult(false, d.msg); startPoll(); }
+      else { testBtn.disabled = false; testBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Test Bunyi'; showResult(false, d.msg); }
     })
-    .catch(() => {
-      testBtn.disabled = false;
-      testBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Test Bunyi Sekarang';
-      showResult(false, 'Gagal menghubungi server.');
-    });
+    .catch(() => { testBtn.disabled = false; testBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Test Bunyi'; });
   });
 
-  // ── Stop button ────────────────────────────────────────────
   stopBtn.addEventListener('click', function() {
     stopBtn.disabled = true;
     stopBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Menghentikan…';
-
-    fetch('{{ url_for("stop_test") }}', { method: 'POST' })
+    fetch('{{ url_for("stop_test") }}', {method: 'POST'})
       .then(r => r.json())
-      .then(data => {
-        stopPolling();
-        setPlaying(false);
-        showResult(true, data.msg);
-      })
-      .catch(() => {
-        stopBtn.disabled = false;
-        stopBtn.innerHTML = '<i class="bi bi-stop-fill me-2"></i>Stop';
-      });
+      .then(d => { if (poll) clearInterval(poll); setPlaying(false); showResult(true, d.msg); })
+      .catch(() => {})
+      .finally(() => { stopBtn.disabled = false; stopBtn.innerHTML = '<i class="bi bi-stop-fill me-2"></i>Stop'; });
   });
 
-  // ── On page load: sync UI with server state ────────────────
+  // Sync on page load
   fetch('{{ url_for("test_status") }}')
     .then(r => r.json())
-    .then(data => {
-      if (data.playing) {
-        setPlaying(true);
-        showResult(true, 'Audio sedang diputar…');
-        startPolling();
-      }
-    })
+    .then(d => { if (d.playing) { setPlaying(true); startPoll(); } })
     .catch(() => {});
 </script>
 {% endblock %}

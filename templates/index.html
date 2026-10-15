@@ -1,143 +1,149 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — Web Alarm{% endblock %}
-
 {% block content %}
-<!-- Header -->
-<div class="page-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+
+<!-- Page header -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
   <div>
-    <h1><i class="bi bi-grid-1x2 me-2" style="color:#818cf8"></i>Dashboard</h1>
-    <div class="subtitle">Kelola semua jadwal alarm Anda</div>
+    <h1 class="pg-title"><i class="bi bi-grid-1x2 me-2 text-primary"></i>Dashboard</h1>
+    <p class="pg-sub mb-0">Ringkasan sistem alarm</p>
   </div>
-  {% if is_admin() %}
-  <a href="{{ url_for('new_schedule') }}" class="btn btn-primary-grad px-3 py-2">
+  <a href="{{ url_for('new_schedule') }}" class="btn btn-grad px-4 py-2">
     <i class="bi bi-plus-lg me-1"></i>Buat Jadwal
   </a>
-  {% endif %}
 </div>
 
-<!-- Clock + Stat Cards -->
-<div class="row g-2 mb-3">
-  <!-- Realtime Clock -->
-  <div class="col-12 col-sm-6 col-lg-4">
-    <div class="stat-card h-100" style="border-color:rgba(99,102,241,.25)">
+<!-- Stat cards -->
+<div class="row g-3 mb-4">
+  <!-- Clock -->
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="stat-card p-3">
       <div class="d-flex align-items-center gap-3">
-        <div class="stat-icon purple"><i class="bi bi-clock-fill"></i></div>
+        <div class="stat-icon si-indigo"><i class="bi bi-clock-fill"></i></div>
         <div>
           <div id="clockTime"
-               style="font-size:1.9rem;font-weight:700;color:#fff;
-                      font-family:monospace;letter-spacing:1px;line-height:1">
+               class="fw-bold"
+               style="font-size:1.6rem;font-family:monospace;line-height:1">
             --:--:--
           </div>
-          <div id="clockDate" style="font-size:.72rem;color:var(--text-muted);margin-top:3px">
-            Memuat…
-          </div>
-          <div style="font-size:.65rem;color:rgba(99,102,241,.8);margin-top:2px;font-weight:600">
-            WIB (UTC+7) · Jam Server
-          </div>
+          <div id="clockDate" class="stat-lbl">Memuat…</div>
+          <div class="stat-lbl" style="color:#818cf8;font-weight:600">WIB · Jam Server</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Stat: Total Jadwal -->
-  <div class="col-6 col-sm-3 col-lg-4">
-    <div class="stat-card">
-      <div class="d-flex align-items-center gap-2">
-        <div class="stat-icon green d-none d-sm-flex"><i class="bi bi-check-circle"></i></div>
+  <div class="col-6 col-sm-3 col-xl-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-3">
+        <div class="stat-icon si-green"><i class="bi bi-check-circle-fill"></i></div>
         <div>
-          <div class="stat-value">{{ active_count }}<span style="font-size:1rem;color:var(--text-muted)">/{{ total }}</span></div>
-          <div class="stat-label">Jadwal Aktif</div>
+          <div class="stat-val">
+            {{ active_count }}<span class="fs-5 fw-normal text-secondary">/{{ total }}</span>
+          </div>
+          <div class="stat-lbl">Jadwal Aktif</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Stat: Audio -->
-  <div class="col-6 col-sm-3 col-lg-4">
-    <div class="stat-card">
-      <div class="d-flex align-items-center gap-2">
-        <div class="stat-icon blue d-none d-sm-flex"><i class="bi bi-music-note-beamed"></i></div>
+  <div class="col-6 col-sm-3 col-xl-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-3">
+        <div class="stat-icon si-blue"><i class="bi bi-music-note-beamed"></i></div>
         <div>
-          <div class="stat-value">{{ audio_count }}</div>
-          <div class="stat-label">File Audio</div>
+          <div class="stat-val">{{ audio_count }}</div>
+          <div class="stat-lbl">File Audio</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-sm-3 col-xl-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-3">
+        <div class="stat-icon si-yellow"><i class="bi bi-people-fill"></i></div>
+        <div>
+          <div class="stat-val">{{ user_count }}</div>
+          <div class="stat-lbl">Total User</div>
         </div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Schedule Table -->
+<!-- Schedule table -->
 <div class="card">
   <div class="card-header d-flex align-items-center justify-content-between">
-    <span><i class="bi bi-alarm me-2" style="color:#818cf8"></i>Jadwal Alarm</span>
-    <span style="font-size:.72rem;color:var(--text-muted);font-weight:400">{{ total }} jadwal</span>
+    <span><i class="bi bi-alarm me-2 text-primary"></i>Daftar Jadwal</span>
+    <small class="text-secondary">{{ total }} jadwal</small>
   </div>
 
   {% if schedules %}
-  <div class="table-wrap">
-    <table class="table">
+  <div class="tbl-responsive">
+    <table class="table table-hover mb-0">
       <thead>
         <tr>
-          <th style="width:36px">#</th>
+          <th style="width:40px">#</th>
           <th>Label / Audio</th>
           <th style="width:90px">Waktu</th>
-          <th class="d-none d-sm-table-cell">Hari</th>
+          <th class="d-none d-md-table-cell">Hari</th>
           <th style="width:90px">Status</th>
-          {% if is_admin() %}<th style="width:110px;text-align:center">Aksi</th>{% endif %}
+          <th class="text-center" style="width:110px">Aksi</th>
         </tr>
       </thead>
       <tbody>
         {% for s in schedules %}
         <tr>
-          <td style="color:var(--text-muted)">{{ loop.index }}</td>
+          <td class="text-secondary">{{ loop.index }}</td>
           <td>
-            <div style="font-weight:500;color:#e2e8f0;word-break:break-word">
-              {{ s.label or s.audio.original_name }}
-            </div>
+            <div class="fw-semibold">{{ s.label or s.audio.original_name }}</div>
             {% if s.label %}
-            <div style="font-size:.72rem;color:var(--text-muted)">
+            <small class="text-secondary">
               <i class="bi bi-music-note me-1"></i>{{ s.audio.original_name }}
-            </div>
+            </small>
             {% endif %}
-            <!-- Show days on mobile (hidden col) -->
-            <div class="d-sm-none mt-1" style="font-size:.7rem;color:var(--text-muted)">
-              {{ s.days_display() }}
+            <!-- Show days inline on mobile -->
+            <div class="d-md-none">
+              <small class="text-secondary">{{ s.days_display() }}</small>
             </div>
           </td>
           <td><span class="badge-time">{{ s.time_display() }}</span></td>
-          <td class="d-none d-sm-table-cell" style="font-size:.78rem;color:var(--text-muted)">
-            {{ s.days_display() }}
+          <td class="d-none d-md-table-cell">
+            <small class="text-secondary">{{ s.days_display() }}</small>
           </td>
           <td>
             {% if s.is_active %}
-              <span class="badge-active">Aktif</span>
+              <span class="badge-on">Aktif</span>
             {% else %}
-              <span class="badge-inactive">Nonaktif</span>
+              <span class="badge-off">Nonaktif</span>
             {% endif %}
           </td>
-          {% if is_admin() %}
           <td>
             <div class="d-flex justify-content-center gap-1">
+              {% if is_admin() %}
               <form action="{{ url_for('toggle_schedule', schedule_id=s.id) }}" method="post">
                 <button type="submit"
-                        class="btn-icon {% if s.is_active %}warning{% else %}success{% endif %}"
+                        class="btn-act {% if s.is_active %}act-warning{% else %}act-success{% endif %}"
                         title="{% if s.is_active %}Nonaktifkan{% else %}Aktifkan{% endif %}">
                   <i class="bi {% if s.is_active %}bi-pause-fill{% else %}bi-play-fill{% endif %}"></i>
                 </button>
               </form>
+              {% endif %}
+              {% if is_admin() or s.created_by == current_user.id %}
               <a href="{{ url_for('edit_schedule', schedule_id=s.id) }}"
-                 class="btn-icon info" title="Edit">
+                 class="btn-act act-info" title="Edit">
                 <i class="bi bi-pencil-fill"></i>
               </a>
               <form action="{{ url_for('delete_schedule', schedule_id=s.id) }}" method="post"
                     onsubmit="return confirm('Hapus jadwal ini?')">
-                <button type="submit" class="btn-icon danger" title="Hapus">
+                <button type="submit" class="btn-act act-danger" title="Hapus">
                   <i class="bi bi-trash-fill"></i>
                 </button>
               </form>
+              {% endif %}
             </div>
           </td>
-          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
@@ -145,68 +151,32 @@
   </div>
   {% else %}
   <div class="empty-state">
-    <i class="bi bi-calendar-x"></i>
+    <i class="bi bi-calendar-x empty-icon"></i>
     <h5>Belum ada jadwal</h5>
-    {% if is_admin() %}
-    <a href="{{ url_for('new_schedule') }}" class="btn btn-primary-grad px-4 mt-2">
+    <a href="{{ url_for('new_schedule') }}" class="btn btn-grad px-4 mt-2">
       <i class="bi bi-plus-lg me-1"></i>Buat Jadwal Pertama
     </a>
-    {% endif %}
   </div>
   {% endif %}
 </div>
+
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  // Realtime clock — sync dengan jam server WIB setiap detik
-  let serverOffset = 0; // ms difference between server and client
-
-  function updateClock(serverTimeStr) {
-    // serverTimeStr = "HH:MM:SS"
-    const [h, m, s] = serverTimeStr.split(':').map(Number);
+  let _offset = 0;
+  function syncTime(t, d) {
+    const [h,m,s] = t.split(':').map(Number);
     const now = new Date();
-    const serverMs = (h * 3600 + m * 60 + s) * 1000;
-    const clientMs = (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) * 1000;
-    serverOffset = serverMs - clientMs;
+    _offset = (h*3600+m*60+s)*1000 - (now.getHours()*3600+now.getMinutes()*60+now.getSeconds())*1000;
+    document.getElementById('clockDate').textContent = d;
   }
-
-  function tickClock() {
-    const now = new Date(Date.now() + serverOffset);
-    const h = String(now.getHours()).padStart(2, '0');
-    const m = String(now.getMinutes()).padStart(2, '0');
-    const s = String(now.getSeconds()).padStart(2, '0');
-    document.getElementById('clockTime').textContent = h + ':' + m + ':' + s;
+  function tick() {
+    const n = new Date(Date.now() + _offset);
+    const p = x => String(x).padStart(2,'0');
+    document.getElementById('clockTime').textContent = p(n.getHours())+':'+p(n.getMinutes())+':'+p(n.getSeconds());
   }
-
-  // Fetch server time once to sync offset
-  fetch('/api/time')
-    .then(r => r.json())
-    .then(data => {
-      updateClock(data.time);
-      document.getElementById('clockDate').textContent = data.date;
-      setInterval(tickClock, 1000);
-      tickClock();
-    })
-    .catch(() => {
-      // Fallback: use browser time
-      setInterval(() => {
-        const now = new Date();
-        const t = [now.getHours(), now.getMinutes(), now.getSeconds()]
-          .map(n => String(n).padStart(2,'0')).join(':');
-        document.getElementById('clockTime').textContent = t;
-      }, 1000);
-    });
-
-  // Re-sync server offset every 60 seconds (drift prevention)
-  setInterval(() => {
-    fetch('/api/time')
-      .then(r => r.json())
-      .then(data => {
-        updateClock(data.time);
-        document.getElementById('clockDate').textContent = data.date;
-      })
-      .catch(() => {});
-  }, 60000);
+  fetch('/api/time').then(r=>r.json()).then(d=>{ syncTime(d.time,d.date); tick(); setInterval(tick,1000); }).catch(()=>{});
+  setInterval(()=>fetch('/api/time').then(r=>r.json()).then(d=>syncTime(d.time,d.date)).catch(()=>{}), 60000);
 </script>
 {% endblock %}

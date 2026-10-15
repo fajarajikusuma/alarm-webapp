@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Kelola User — Web Alarm{% endblock %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="pg-title"><i class="bi bi-people-fill me-2 text-primary"></i>Kelola User</h1>
+    <p class="pg-sub mb-0">Manajemen akun dan hak akses pengguna</p>
+  </div>
+  <a href="{{ url_for('create_user') }}" class="btn btn-grad px-4 py-2">
+    <i class="bi bi-person-plus me-1"></i>Tambah User
+  </a>
+</div>
+
+<!-- Permission info cards -->
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-6">
+    <div class="card h-100" style="border-color:rgba(99,102,241,.3)">
+      <div class="card-body d-flex align-items-start gap-3">
+        <div class="stat-icon si-indigo flex-shrink-0">
+          <i class="bi bi-shield-fill-check"></i>
+        </div>
+        <div>
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge-admin">Admin</span>
+            <span class="fw-semibold">Akses Penuh</span>
+          </div>
+          <p class="text-secondary mb-0" style="font-size:.8rem;line-height:1.6">
+            Upload &amp; hapus semua audio · Kelola semua jadwal ·
+            Kelola user · Konfigurasi audio output
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-6">
+    <div class="card h-100" style="border-color:rgba(16,185,129,.25)">
+      <div class="card-body d-flex align-items-start gap-3">
+        <div class="stat-icon si-green flex-shrink-0">
+          <i class="bi bi-person-fill-check"></i>
+        </div>
+        <div>
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge-user">User</span>
+            <span class="fw-semibold">Akses Terbatas</span>
+          </div>
+          <p class="text-secondary mb-0" style="font-size:.8rem;line-height:1.6">
+            Upload audio sendiri · Buat &amp; kelola jadwal sendiri ·
+            Lihat semua jadwal &amp; audio
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- User table -->
+<div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-person-lines-fill me-2 text-primary"></i>Daftar Pengguna</span>
+    <small class="text-secondary">{{ users|length }} pengguna</small>
+  </div>
+
+  {% if users %}
+  <div class="tbl-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th style="width:40px">#</th>
+          <th>Pengguna</th>
+          <th class="d-none d-sm-table-cell">Email</th>
+          <th style="width:90px">Role</th>
+          <th style="width:90px">Status</th>
+          <th class="d-none d-lg-table-cell" style="width:120px">Bergabung</th>
+          <th class="text-center" style="width:110px">Aksi</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td class="text-secondary">{{ loop.index }}</td>
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              <span class="user-av"
+                    style="background:{% if u.role=='admin' %}linear-gradient(135deg,#6366f1,#8b5cf6){% else %}linear-gradient(135deg,#10b981,#059669){% endif %}">
+                {{ u.name[0]|upper }}
+              </span>
+              <div>
+                <div class="fw-semibold" style="font-size:.85rem">{{ u.name }}</div>
+                {% if not u.is_active %}
+                  <small class="text-danger">Dinonaktifkan</small>
+                {% endif %}
+                <!-- Show email on small screens -->
+                <div class="d-sm-none">
+                  <small class="text-secondary">{{ u.email }}</small>
+                </div>
+              </div>
+            </div>
+          </td>
+          <td class="d-none d-sm-table-cell text-secondary" style="font-size:.82rem">
+            {{ u.email }}
+          </td>
+          <td>
+            {% if u.role == 'admin' %}
+              <span class="badge-admin">Admin</span>
+            {% else %}
+              <span class="badge-user">User</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if u.is_active %}
+              <span class="badge-on">Aktif</span>
+            {% else %}
+              <span class="badge-off">Nonaktif</span>
+            {% endif %}
+          </td>
+          <td class="d-none d-lg-table-cell text-secondary" style="font-size:.78rem">
+            {{ u.created_at.strftime('%d %b %Y') if u.created_at else '—' }}
+          </td>
+          <td>
+            <div class="d-flex justify-content-center gap-1">
+              <!-- Edit -->
+              <a href="{{ url_for('edit_user', user_id=u.id) }}"
+                 class="btn-act act-info" title="Edit user">
+                <i class="bi bi-pencil-fill"></i>
+              </a>
+
+              {% if u.email != config_admin_email %}
+              <!-- Toggle active -->
+              <form action="{{ url_for('toggle_user', user_id=u.id) }}" method="post">
+                <button type="submit"
+                        class="btn-act {% if u.is_active %}act-warning{% else %}act-success{% endif %}"
+                        title="{% if u.is_active %}Nonaktifkan{% else %}Aktifkan{% endif %}">
+                  <i class="bi {% if u.is_active %}bi-person-x-fill{% else %}bi-person-check-fill{% endif %}"></i>
+                </button>
+              </form>
+
+              {% if u.id != current_user.id %}
+              <!-- Delete -->
+              <form action="{{ url_for('delete_user', user_id=u.id) }}" method="post"
+                    onsubmit="return confirm('Hapus user {{ u.name }}?\nTindakan ini tidak dapat dibatalkan.')">
+                <button type="submit" class="btn-act act-danger" title="Hapus user">
+                  <i class="bi bi-trash-fill"></i>
+                </button>
+              </form>
+              {% endif %}
+
+              {% else %}
+              <small class="text-secondary d-flex align-items-center px-1" style="font-size:.65rem">
+                Admin Utama
+              </small>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <i class="bi bi-people empty-icon"></i>
+    <h5>Belum ada user</h5>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
