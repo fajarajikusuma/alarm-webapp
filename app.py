@@ -19,6 +19,7 @@ from flask_login import (
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 
@@ -61,6 +62,14 @@ WIB = pytz.timezone('Asia/Jakarta')
 # APScheduler
 # ---------------------------------------------------------------------------
 scheduler = BackgroundScheduler(daemon=True, timezone=WIB)
+
+def _scheduler_listener(event):
+    if event.exception:
+        app.logger.error(f'Scheduler job {event.job_id} FAILED: {event.exception}\n{event.traceback}')
+    else:
+        app.logger.info(f'Scheduler job {event.job_id} executed OK')
+
+scheduler.add_listener(_scheduler_listener, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
 scheduler.start()
 
 
@@ -426,6 +435,7 @@ _test_process_lock = _threading.Lock()
 _alarm_state: dict = {
     'playing': False, 'label': '', 'time': '',
     'started_at': '', 'process': None,
+    'show_until': 0,   # epoch seconds — modal stays visible at least until this time
 }
 _alarm_lock = _threading.Lock()
 
@@ -433,13 +443,18 @@ _alarm_lock = _threading.Lock()
 def _alarm_is_playing() -> bool:
     with _alarm_lock:
         proc = _alarm_state['process']
-        if proc is None:
-            return False
-        if proc.poll() is None:
+        # If process is still running, definitely playing
+        if proc is not None and proc.poll() is None:
             return True
-        _alarm_state['playing'] = False
-        _alarm_state['process'] = None
-        return False
+        # Process done but keep modal visible for minimum display time (30s)
+        import time as _t
+        if _t.time() < _alarm_state.get('show_until', 0):
+            return True
+        # Truly done
+        if proc is not None:
+            _alarm_state['playing'] = False
+            _alarm_state['process'] = None
+        return _alarm_state.get('playing', False)
 
 
 def _verify_alarm_playback(proc: subprocess.Popen, label: str,
@@ -494,6 +509,35 @@ def _verify_alarm_playback(proc: subprocess.Popen, label: str,
 
 def _start_alarm(filepath: str, volume: int, label: str, time_str: str):
     global _alarm_state
+
+    # Health check & repair OUTSIDE the lock to avoid long blocking
+    h = get_audio_health()
+    if not h.get('ok'):
+        app.logger.warning('Audio unhealthy before alarm — running repair')
+        _log_audio('warn', 'ALARM_PRECHECK_FAIL',
+                   f'label="{label}" time={time_str} → running repair first')
+        try:
+            with app.app_context():
+                run_audio_health_check()
+        except Exception:
+            pass
+
+    set_hardware_volume(volume)
+    _log_audio('info', 'ALARM_FIRE',
+               f'label="{label}" time={time_str} file={os.path.basename(filepath)} vol={volume}%')
+
+    try:
+        proc = subprocess.Popen(
+            ['mpg123', '-q', filepath],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+    except Exception as e:
+        app.logger.error(f'Alarm play error: {e}')
+        _log_audio('error', 'ALARM_PLAY_ERROR',
+                   f'label="{label}" file={os.path.basename(filepath)} err={e}')
+        return
+
     with _alarm_lock:
         old = _alarm_state.get('process')
         if old is not None:
@@ -501,36 +545,15 @@ def _start_alarm(filepath: str, volume: int, label: str, time_str: str):
                 old.terminate()
             except Exception:
                 pass
-
-        # Auto-repair audio if not healthy before playing alarm
-        h = get_audio_health()
-        if not h.get('ok'):
-            app.logger.warning('Audio unhealthy before alarm — running repair')
-            _log_audio('warn', 'ALARM_PRECHECK_FAIL',
-                       f'label="{label}" time={time_str} → running repair first')
-            run_audio_health_check()
-
-        set_hardware_volume(volume)
-        _log_audio('info', 'ALARM_FIRE',
-                   f'label="{label}" time={time_str} file={os.path.basename(filepath)} vol={volume}%')
-        try:
-            proc = subprocess.Popen(
-                ['mpg123', '-q', filepath],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
-        except Exception as e:
-            app.logger.error(f'Alarm play error: {e}')
-            _log_audio('error', 'ALARM_PLAY_ERROR',
-                       f'label="{label}" file={os.path.basename(filepath)} err={e}')
-            return
+        import time as _t
         _alarm_state.update({
             'playing': True, 'label': label, 'time': time_str,
             'started_at': datetime.now(WIB).strftime('%Y-%m-%dT%H:%M:%S'),
             'process': proc,
+            'show_until': _t.time() + 30,  # keep modal visible for at least 30s
         })
-        _log_audio('ok', 'ALARM_STARTED',
-                   f'pid={proc.pid} label="{label}" file={os.path.basename(filepath)}')
+    _log_audio('ok', 'ALARM_STARTED',
+               f'pid={proc.pid} label="{label}" file={os.path.basename(filepath)}')
 
     # Verify playback is actually running after a short delay (non-blocking)
     _threading.Thread(
@@ -554,16 +577,29 @@ def stop_alarm():
                 except Exception:
                     pass
         label = _alarm_state.get('label', '')
-        _alarm_state.update({'playing': False, 'label': '', 'time': '', 'process': None})
+        _alarm_state.update({'playing': False, 'label': '', 'time': '', 'process': None, 'show_until': 0})
     _log_audio('info', 'ALARM_STOPPED', f'label="{label}"')
 
 
 def get_alarm_state() -> dict:
-    playing = _alarm_is_playing()
     with _alarm_lock:
+        proc = _alarm_state['process']
+        # Check if mpg123 still running
+        if proc is not None and proc.poll() is None:
+            playing = True
+        elif _time.time() < _alarm_state.get('show_until', 0):
+            playing = True
+        else:
+            if proc is not None:
+                _alarm_state['playing'] = False
+                _alarm_state['process'] = None
+            playing = _alarm_state.get('playing', False)
+
         return {
-            'playing': playing, 'label': _alarm_state['label'],
-            'time': _alarm_state['time'], 'started_at': _alarm_state['started_at'],
+            'playing':    playing,
+            'label':      _alarm_state['label'],
+            'time':       _alarm_state['time'],
+            'started_at': _alarm_state['started_at'],
         }
 
 
@@ -615,10 +651,15 @@ def play_test_audio(filepath, volume=80) -> bool:
 
 
 def play_audio_with_settings(filepath, schedule_label='', schedule_time=''):
-    with app.app_context():
-        s = get_settings()
-        _start_alarm(filepath, volume=s.volume,
-                     label=schedule_label, time_str=schedule_time)
+    try:
+        with app.app_context():
+            s = get_settings()
+            _start_alarm(filepath, volume=s.volume,
+                         label=schedule_label, time_str=schedule_time)
+    except Exception as e:
+        import traceback
+        app.logger.error(f'play_audio_with_settings FAILED: {e}\n{traceback.format_exc()}')
+        _log_audio('error', 'SCHEDULER_JOB_FAIL', str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -1209,6 +1250,30 @@ def api_alarm_state():
     return jsonify(get_alarm_state())
 
 
+@app.route('/api/alarm/stream')
+def api_alarm_stream():
+    """SSE stream — pushes alarm state changes to browser instantly."""
+    from flask import Response, stream_with_context
+    def event_stream():
+        last = None
+        import time as _t
+        while True:
+            state = get_alarm_state()
+            # Only send when playing state changes
+            cur = state['playing']
+            if cur != last:
+                last = cur
+                data = f"data: {__import__('json').dumps(state)}\n\n"
+                yield data
+            # Also send keepalive every 15s so connection stays alive
+            yield ": keepalive\n\n"
+            _t.sleep(1)
+    return Response(stream_with_context(event_stream()),
+                    mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache',
+                             'X-Accel-Buffering': 'no'})
+
+
 @app.route('/api/alarm/stop', methods=['POST'])
 @login_required
 def api_alarm_stop():
@@ -1329,4 +1394,4 @@ def too_large(e):
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

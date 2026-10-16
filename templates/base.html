@@ -555,7 +555,8 @@ function pollAudioHealth() {
 setInterval(pollAudioHealth, 15000);
 pollAudioHealth();
 
-// ── Theme toggle ────────────────────────────────const html = document.documentElement;
+// ── Theme toggle ────────────────────────────────
+const html = document.documentElement;
 
 function applyTheme(theme) {
   html.setAttribute('data-bs-theme', theme);
@@ -580,46 +581,81 @@ function toggleTheme() {
   applyTheme(saved);
 })();
 
-// ── Alarm modal polling ─────────────────────────
+// ── Alarm modal polling + SSE push ──────────────
 let _alarmActive = false;
 
 function showAlarm(state) {
-  document.getElementById('alarmLabel').textContent = state.label || 'Alarm';
-  document.getElementById('alarmTime').textContent  = state.time  || '--:--';
-  const bd = document.getElementById('alarmBackdrop');
+  const label = document.getElementById('alarmLabel');
+  const time  = document.getElementById('alarmTime');
+  const bd    = document.getElementById('alarmBackdrop');
+  if (!bd) return;
+  if (label) label.textContent = state.label || 'Alarm';
+  if (time)  time.textContent  = state.time  || '--:--';
   bd.style.display = 'flex';
+  const btn = document.getElementById('alarmStopBtn');
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-stop-circle-fill me-2"></i>Hentikan Alarm'; }
+  try { document.title = '🔔 ALARM! ' + (state.label || ''); } catch(e) {}
 }
 
 function hideAlarm() {
-  document.getElementById('alarmBackdrop').style.display = 'none';
+  const bd = document.getElementById('alarmBackdrop');
+  if (bd) bd.style.display = 'none';
+  try { document.title = document.title.replace(/^🔔 ALARM! /, ''); } catch(e) {}
 }
 
 function stopAlarm() {
   const btn = document.getElementById('alarmStopBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Menghentikan…';
-  fetch('/api/alarm/stop', {method:'POST'})
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Menghentikan…'; }
+  fetch('/api/alarm/stop', {method:'POST', credentials:'same-origin'})
     .then(r => r.json())
     .then(() => { _alarmActive = false; hideAlarm(); })
-    .catch(() => {})
+    .catch(() => { _alarmActive = false; hideAlarm(); })
     .finally(() => {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-stop-circle-fill me-2"></i>Hentikan Alarm';
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-stop-circle-fill me-2"></i>Hentikan Alarm'; }
     });
 }
 
+function handleAlarmState(s) {
+  if (s.playing && !_alarmActive) {
+    _alarmActive = true;
+    showAlarm(s);
+  } else if (!s.playing && _alarmActive) {
+    _alarmActive = false;
+    hideAlarm();
+  }
+}
+
 function pollAlarm() {
-  fetch('/api/alarm/state')
-    .then(r => r.json())
-    .then(s => {
-      if (s.playing && !_alarmActive) { _alarmActive = true;  showAlarm(s); }
-      else if (!s.playing && _alarmActive) { _alarmActive = false; hideAlarm(); }
-    })
+  fetch('/api/alarm/state', {credentials:'same-origin'})
+    .then(r => r.ok ? r.json() : null)
+    .then(s => { if (s) handleAlarmState(s); })
     .catch(() => {});
 }
 
+// SSE — primary method (not affected by browser tab throttling)
+let _sseOk = false;
+(function startSSE() {
+  if (!window.EventSource) return;
+  const es = new EventSource('/api/alarm/stream');
+  es.onmessage = function(e) {
+    _sseOk = true;
+    try { handleAlarmState(JSON.parse(e.data)); } catch(err) {}
+  };
+  es.onerror = function() {
+    _sseOk = false;
+    es.close();
+    setTimeout(startSSE, 5000);  // reconnect after 5s
+  };
+})();
+
+// Polling fallback (runs always, covers SSE gaps + background tabs)
 setInterval(pollAlarm, 2000);
 pollAlarm();
+
+// Resume immediate poll when tab becomes visible (browser throttles background tabs)
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) pollAlarm();
+});
 </script>
 
 {% block extra_scripts %}{% endblock %}
