@@ -340,6 +340,12 @@
               <i class="bi bi-speaker me-1"></i>Audio Output
             </a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint == 'audio_monitor' %}active{% endif %}"
+               href="{{ url_for('audio_monitor') }}">
+              <i class="bi bi-soundwave me-1"></i>Monitor Audio
+            </a>
+          </li>
           {% endif %}
         {% endif %}
       </ul>
@@ -351,6 +357,22 @@
                 onclick="toggleTheme()" class="d-none d-lg-flex">
           <i class="bi bi-sun-fill" id="themeIcon"></i>
         </button>
+
+        <!-- Audio health indicator (desktop) -->
+        {% if current_user.is_authenticated %}
+        <div id="audioHealthBadge"
+             class="d-none d-lg-flex align-items-center gap-1 px-2 py-1"
+             style="border-radius:8px;border:1px solid var(--bs-border-color);
+                    font-size:.72rem;cursor:pointer;transition:all .2s"
+             onclick="triggerAudioRepair(this)"
+             title="Status koneksi audio hardware">
+          <span id="audioHealthDot"
+                style="width:7px;height:7px;border-radius:50%;
+                       background:#6c757d;display:inline-block;
+                       transition:background .3s"></span>
+          <span id="audioHealthText" style="color:var(--bs-secondary-color)">Audio…</span>
+        </div>
+        {% endif %}
 
         {% if current_user.is_authenticated %}
           <div class="dropdown">
@@ -481,8 +503,59 @@
         crossorigin="anonymous"></script>
 
 <script>
-// ── Theme toggle ────────────────────────────────
-const html = document.documentElement;
+// ── Audio health polling ────────────────────────
+const _audioHealthBadge = document.getElementById('audioHealthBadge');
+const _audioHealthDot   = document.getElementById('audioHealthDot');
+const _audioHealthText  = document.getElementById('audioHealthText');
+let   _audioRepairBusy  = false;
+
+function updateAudioHealth(h) {
+  if (!_audioHealthDot) return;
+  if (h.ok) {
+    _audioHealthDot.style.background = '#34d399';
+    _audioHealthDot.style.boxShadow  = '0 0 5px #34d399';
+    _audioHealthText.textContent     = 'Audio OK';
+    _audioHealthText.style.color     = '#34d399';
+    _audioHealthBadge.style.borderColor = 'rgba(52,211,153,.3)';
+    _audioHealthBadge.title = `Audio OK — ${h.card || 'USB'} | Vol ${h.volume}% | ${h.last_check}`;
+  } else {
+    _audioHealthDot.style.background = '#f87171';
+    _audioHealthDot.style.boxShadow  = '0 0 5px #f87171';
+    _audioHealthText.textContent     = 'Audio Error';
+    _audioHealthText.style.color     = '#f87171';
+    _audioHealthBadge.style.borderColor = 'rgba(248,113,113,.3)';
+    _audioHealthBadge.title = `Audio Error: ${h.error} — Klik untuk perbaiki`;
+  }
+}
+
+function triggerAudioRepair(el) {
+  if (_audioRepairBusy) return;
+  _audioRepairBusy = true;
+  if (_audioHealthDot) {
+    _audioHealthDot.style.background = '#fbbf24';
+    _audioHealthDot.style.boxShadow  = '0 0 5px #fbbf24';
+    _audioHealthText.textContent     = 'Memperbaiki…';
+    _audioHealthText.style.color     = '#fbbf24';
+  }
+  fetch('/api/audio/repair', {method: 'POST'})
+    .then(r => r.json())
+    .then(d => { updateAudioHealth(d.health); })
+    .catch(() => {})
+    .finally(() => { _audioRepairBusy = false; });
+}
+
+function pollAudioHealth() {
+  fetch('/api/audio/health')
+    .then(r => r.json())
+    .then(updateAudioHealth)
+    .catch(() => {});
+}
+
+// Poll audio health every 15 seconds
+setInterval(pollAudioHealth, 15000);
+pollAudioHealth();
+
+// ── Theme toggle ────────────────────────────────const html = document.documentElement;
 
 function applyTheme(theme) {
   html.setAttribute('data-bs-theme', theme);

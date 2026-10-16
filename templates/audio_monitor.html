@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block title %}Monitor Audio Realtime — Web Alarm{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="pg-title">
+      <i class="bi bi-soundwave me-2 text-primary"></i>Monitor Audio Realtime
+    </h1>
+    <p class="pg-sub mb-0">Pantau output audio secara langsung — log otomatis, fix manual tersedia</p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <button id="btnTestFire" onclick="doTestFire()"
+            class="btn btn-grad px-3 py-2">
+      <i class="bi bi-play-circle-fill me-1"></i>Test Bunyikan
+    </button>
+    <button id="btnFix" onclick="doFix()"
+            class="btn px-3 py-2"
+            style="background:linear-gradient(135deg,#f59e0b,#d97706);border:none;color:#fff;border-radius:10px">
+      <i class="bi bi-wrench-adjustable-circle-fill me-1"></i>Fix Audio
+    </button>
+    <button id="btnStopAlarm" onclick="doStopAlarm()"
+            class="btn px-3 py-2"
+            style="background:linear-gradient(135deg,#ef4444,#dc2626);border:none;color:#fff;border-radius:10px">
+      <i class="bi bi-stop-circle-fill me-1"></i>Stop Alarm
+    </button>
+  </div>
+</div>
+
+<!-- Status cards row -->
+<div class="row g-3 mb-4">
+
+  <!-- Hardware status -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card p-3 h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <div class="stat-icon si-indigo"><i class="bi bi-usb-symbol"></i></div>
+        <span class="fw-semibold" style="font-size:.85rem">Hardware</span>
+      </div>
+      <div id="hwStatus" class="fw-bold" style="font-size:1.05rem">—</div>
+      <div id="hwCard" class="text-secondary" style="font-size:.75rem">—</div>
+      <div id="hwVol" class="text-secondary" style="font-size:.75rem">—</div>
+    </div>
+  </div>
+
+  <!-- PCM / ALSA -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card p-3 h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <div class="stat-icon si-blue"><i class="bi bi-hdd-network"></i></div>
+        <span class="fw-semibold" style="font-size:.85rem">ALSA / PCM</span>
+      </div>
+      <div id="pcmDevice" class="fw-bold" style="font-size:1.05rem">—</div>
+      <div id="pcmUsb" class="text-secondary" style="font-size:.75rem">—</div>
+      <div id="lastCheck" class="text-secondary" style="font-size:.75rem">Last check: —</div>
+    </div>
+  </div>
+
+  <!-- Alarm state -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card p-3 h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <div class="stat-icon si-green"><i class="bi bi-bell-fill"></i></div>
+        <span class="fw-semibold" style="font-size:.85rem">Output Sekarang</span>
+      </div>
+      <div id="alarmStatusBadge"
+           style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;
+                  font-weight:700;background:rgba(100,116,139,.15);color:#94a3b8">
+        IDLE
+      </div>
+      <div id="alarmInfo" class="text-secondary mt-1" style="font-size:.78rem">—</div>
+    </div>
+  </div>
+
+  <!-- Auto-fix -->
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card p-3 h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <div class="stat-icon si-yellow"><i class="bi bi-shield-check"></i></div>
+        <span class="fw-semibold" style="font-size:.85rem">Auto-Fix</span>
+      </div>
+      <div id="lastRepairText" class="fw-bold" style="font-size:.85rem">—</div>
+      <div id="lastRepairDetail" class="text-secondary" style="font-size:.75rem">—</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Log panel -->
+<div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>
+      <i class="bi bi-journal-code me-2 text-primary"></i>
+      Log Output Audio
+      <span id="logCount" class="ms-1 text-secondary" style="font-size:.75rem"></span>
+    </span>
+    <div class="d-flex align-items-center gap-2">
+      <!-- Live indicator -->
+      <span id="liveIndicator"
+            style="display:inline-flex;align-items:center;gap:5px;font-size:.72rem;
+                   color:var(--bs-secondary-color)">
+        <span id="liveDot"
+              style="width:7px;height:7px;border-radius:50%;background:#34d399;
+                     animation:pulseDot 1.5s infinite"></span>
+        LIVE
+      </span>
+      <button onclick="clearLog()"
+              class="btn btn-sm btn-outline-secondary py-0 px-2"
+              style="font-size:.75rem;border-radius:6px">
+        <i class="bi bi-trash3 me-1"></i>Clear view
+      </button>
+    </div>
+  </div>
+
+  <div id="logPanel"
+       style="height:420px;overflow-y:auto;font-family:monospace;font-size:.78rem;
+              padding:10px 14px;background:var(--bs-secondary-bg);
+              border-radius:0 0 12px 12px">
+    <div class="text-secondary text-center py-4" id="logEmpty">
+      <i class="bi bi-hourglass me-1"></i>Memuat log…
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes pulseDot {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:.4; transform:scale(.7); }
+}
+.log-entry {
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+  padding:4px 0;
+  border-bottom:1px solid rgba(255,255,255,.04);
+  animation:fadeIn .3s ease;
+}
+@keyframes fadeIn { from{opacity:0;transform:translateY(-3px)} to{opacity:1;transform:none} }
+.log-ts    { color:#64748b;min-width:62px;flex-shrink:0 }
+.log-badge {
+  min-width:130px;flex-shrink:0;
+  padding:0 6px;border-radius:4px;
+  font-weight:700;font-size:.7rem;
+  display:inline-flex;align-items:center;justify-content:center;
+  height:18px;
+}
+.log-detail { color:var(--bs-body-color);word-break:break-all }
+.badge-ok    { background:rgba(52,211,153,.15);color:#34d399 }
+.badge-error { background:rgba(248,113,113,.15);color:#f87171 }
+.badge-warn  { background:rgba(251,191,36,.15);color:#fbbf24 }
+.badge-info  { background:rgba(99,102,241,.12);color:#818cf8 }
+</style>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// ────────────────────────────────────────────────────────────────────────────
+// Audio Monitor — realtime polling
+// ────────────────────────────────────────────────────────────────────────────
+let _logEntries  = [];   // local cache of log entries for clear-view
+let _logRendered = 0;    // how many entries already painted
+let _autoScroll  = true; // stick to top (newest first)
+
+// ── Render log ──────────────────────────────────────────────────────────────
+function renderLog(entries) {
+  const panel = document.getElementById('logPanel');
+  const empty = document.getElementById('logEmpty');
+
+  if (!entries.length) {
+    panel.innerHTML = '<div class="text-secondary text-center py-4" id="logEmpty"><i class="bi bi-journal-x me-1"></i>Belum ada log</div>';
+    document.getElementById('logCount').textContent = '';
+    return;
+  }
+
+  if (empty) empty.remove();
+
+  // Only add new entries at the top (entries[0] is newest)
+  const newEntries = entries.slice(0, entries.length - _logRendered < 0 ? 0
+                                       : entries.length - _logRendered);
+  // Actually just re-render all for simplicity (max 100 entries, fast)
+  panel.innerHTML = entries.map(e => {
+    const cls = {ok:'badge-ok',error:'badge-error',warn:'badge-warn',info:'badge-info'}[e.level]||'badge-info';
+    const icon = {ok:'✓',error:'✗',warn:'⚠',info:'ℹ'}[e.level]||'·';
+    return `<div class="log-entry">
+      <span class="log-ts">${e.ts}</span>
+      <span class="log-badge ${cls}">${icon} ${e.event}</span>
+      <span class="log-detail">${escHtml(e.detail)}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('logCount').textContent = `(${entries.length} entri)`;
+  _logRendered = entries.length;
+
+  // Auto scroll to top (newest first layout)
+  if (_autoScroll) panel.scrollTop = 0;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function clearLog() {
+  _logEntries  = [];
+  _logRendered = 0;
+  document.getElementById('logPanel').innerHTML =
+    '<div class="text-secondary text-center py-4"><i class="bi bi-journal-x me-1"></i>Log dibersihkan (view saja, log server tetap berjalan)</div>';
+  document.getElementById('logCount').textContent = '';
+}
+
+// ── Update hardware status card ──────────────────────────────────────────────
+function updateHwCard(h) {
+  const ok = h.ok;
+  document.getElementById('hwStatus').innerHTML = ok
+    ? '<span style="color:#34d399"><i class="bi bi-check-circle-fill me-1"></i>OK — Output Aktif</span>'
+    : '<span style="color:#f87171"><i class="bi bi-exclamation-circle-fill me-1"></i>ERROR — Output Mati</span>';
+  document.getElementById('hwCard').textContent   = h.card   ? `Kartu: ${h.card}` : 'Kartu: tidak terdeteksi';
+  // Show volume with amixer warning note if applicable
+  let volText = h.volume !== undefined ? `Volume: ${h.volume}%` : 'Volume: —';
+  if (h.amixer_warn) volText += ' ⚠ (amixer warn)';
+  document.getElementById('hwVol').textContent    = volText;
+  document.getElementById('pcmDevice').textContent = h.device_node || '—';
+  document.getElementById('pcmUsb').textContent    = h.usb_id ? `USB ID: ${h.usb_id}` : 'USB: tidak terdeteksi';
+  document.getElementById('lastCheck').textContent = `Last check: ${h.last_check || '—'}`;
+  // Auto-fix info
+  document.getElementById('lastRepairText').textContent   = h.last_repair ? 'Repair dijalankan' : (h.ok ? 'Sehat ✓' : 'Belum ada repair');
+  document.getElementById('lastRepairDetail').textContent = h.last_repair || (h.ok ? 'Hardware sehat' : h.error || '—');
+  // Show amixer warning if present
+  if (h.amixer_warn) {
+    document.getElementById('lastRepairDetail').textContent = `⚠ amixer non-fatal: ${h.amixer_warn.substring(0, 80)}`;
+  }
+}
+
+// ── Update alarm state card ──────────────────────────────────────────────────
+function updateAlarmCard(s) {
+  const badge = document.getElementById('alarmStatusBadge');
+  const info  = document.getElementById('alarmInfo');
+  if (s.playing) {
+    badge.style.background = 'rgba(52,211,153,.18)';
+    badge.style.color      = '#34d399';
+    badge.textContent      = '🔔 PLAYING';
+    info.textContent       = `${s.label || 'Alarm'} — ${s.time || ''}`;
+  } else {
+    badge.style.background = 'rgba(100,116,139,.15)';
+    badge.style.color      = '#94a3b8';
+    badge.textContent      = 'IDLE';
+    info.textContent       = '—';
+  }
+}
+
+// ── Poll cycle ───────────────────────────────────────────────────────────────
+function poll() {
+  // Fetch log + health + alarm state in parallel
+  Promise.all([
+    fetch('/api/audio/log?limit=100').then(r=>r.json()),
+    fetch('/api/audio/health').then(r=>r.json()),
+    fetch('/api/alarm/state').then(r=>r.json()),
+  ]).then(([log, health, alarm]) => {
+    _logEntries = log;
+    renderLog(log);
+    updateHwCard(health);
+    updateAlarmCard(alarm);
+    // If health just became bad, flash log panel border
+    document.getElementById('logPanel').style.borderTop =
+      health.ok ? '' : '2px solid rgba(248,113,113,.4)';
+  }).catch(() => {
+    document.getElementById('liveDot').style.background = '#f87171';
+  });
+}
+
+// Poll every 3 seconds
+setInterval(poll, 3000);
+poll();
+
+// ── Action: Fix ──────────────────────────────────────────────────────────────
+function doFix() {
+  const btn = document.getElementById('btnFix');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Memperbaiki…';
+  fetch('/api/audio/repair', {method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{
+      updateHwCard(d.health);
+      poll();  // refresh log immediately
+    })
+    .catch(()=>{})
+    .finally(()=>{
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-wrench-adjustable-circle-fill me-1"></i>Fix Audio';
+    });
+}
+
+// ── Action: Test Bunyikan ─────────────────────────────────────────────────────
+function doTestFire() {
+  const btn = document.getElementById('btnTestFire');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Membunyikan…';
+  fetch('/api/audio/test-fire', {method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{
+      setTimeout(poll, 500);   // refresh log shortly after
+      setTimeout(poll, 2500);  // and again after verify thread
+    })
+    .catch(()=>{})
+    .finally(()=>{
+      setTimeout(()=>{
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-circle-fill me-1"></i>Test Bunyikan';
+      }, 3000);
+    });
+}
+
+// ── Action: Stop Alarm ───────────────────────────────────────────────────────
+function doStopAlarm() {
+  fetch('/api/alarm/stop', {method:'POST'})
+    .then(()=>poll())
+    .catch(()=>{});
+}
+
+// Pause auto-scroll if user scrolled down manually
+document.getElementById('logPanel').addEventListener('scroll', function() {
+  _autoScroll = this.scrollTop < 30;
+});
+</script>
+{% endblock %}
