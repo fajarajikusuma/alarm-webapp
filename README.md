@@ -38,7 +38,7 @@ Admin ditentukan dari `ADMIN_EMAIL` di `.env`. Akun pertama yang register dengan
 # Python 3.10+
 # USB Audio Device terhubung (opsional, untuk output ke amplifier)
 sudo apt update
-sudo apt install -y python3 python3-venv python3-pip mpg123 alsa-utils git
+sudo apt install -y python3 python3-venv python3-pip mpv mpg123 alsa-utils git chrony
 ```
 
 ### 2. Clone / salin project
@@ -194,8 +194,8 @@ Isi file service:
 ```ini
 [Unit]
 Description=Web Alarm System (Flask + APScheduler)
-After=network.target local-fs.target
-Wants=network.target
+After=network.target sound.target time-sync.target alsa-restore.service systemd-timesyncd.service
+Wants=sound.target time-sync.target
 StartLimitBurst=10
 StartLimitIntervalSec=120s
 

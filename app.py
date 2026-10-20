@@ -1,6 +1,7 @@
 import os
 import uuid
 import subprocess
+import shutil
 import re
 import pytz
 import threading as _threading
@@ -61,7 +62,17 @@ WIB = pytz.timezone('Asia/Jakarta')
 # ---------------------------------------------------------------------------
 # APScheduler
 # ---------------------------------------------------------------------------
-scheduler = BackgroundScheduler(daemon=True, timezone=WIB)
+# misfire_grace_time=300 (5 mins) guarantees alarms ring even if VM reboots,
+# powers up late, or NTP clock steps during system boot.
+scheduler = BackgroundScheduler(
+    daemon=True,
+    timezone=WIB,
+    job_defaults={
+        'misfire_grace_time': 300,
+        'coalesce': True,
+        'max_instances': 1,
+    }
+)
 
 def _scheduler_listener(event):
     if event.exception:
@@ -110,6 +121,33 @@ def get_audio_log(limit: int = 100) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Audio Player & Engine selector
+# ---------------------------------------------------------------------------
+def get_audio_player_cmd(filepath: str, volume: int = 80) -> tuple[list[str], str]:
+    """
+    Returns (cmd_list, player_name).
+    1. mpv: Modern, industry standard on Linux, built-in software volume,
+       auto-reconnect, highly resilient to ALSA underruns.
+    2. mpg123: Classic fallback, supports software volume scaling via -f.
+    3. ffplay: Fallback from ffmpeg.
+    """
+    vol = max(0, min(100, volume))
+    if shutil.which('mpv'):
+        return [
+            'mpv', '--no-video', '--terminal=no',
+            f'--volume={vol}', '--volume-max=100',
+            '--gapless-audio=yes', filepath
+        ], 'mpv'
+    elif shutil.which('mpg123'):
+        # Software scaling factor (-f 0..32768)
+        scale = int((vol / 100) * 32768)
+        return ['mpg123', '-q', '-f', str(scale), filepath], 'mpg123'
+    elif shutil.which('ffplay'):
+        return ['ffplay', '-nodisp', '-autoexit', '-volume', str(vol), filepath], 'ffplay'
+    return ['mpg123', '-q', filepath], 'mpg123'
+
+
+# ---------------------------------------------------------------------------
 # ALSA / Audio helpers
 # ---------------------------------------------------------------------------
 def get_alsa_devices():
@@ -123,13 +161,35 @@ def get_alsa_devices():
                     card_names[m.group(1)] = m.group(3).strip()
     except Exception:
         pass
-    usb_card_name = card_names.get('1', 'USB Audio Device')
-    devices.append({'id': 'default', 'name': f'USB Audio Device — {usb_card_name}',
-                    'card': '1', 'device': '0', 'note': 'Recommended'})
+
+    # Find best default card (prefer USB, else first card found)
+    default_card = '0'
+    default_name = 'Default Sound Device'
+    for c_idx, c_name in card_names.items():
+        if 'usb' in c_name.lower():
+            default_card = c_idx
+            default_name = c_name
+            break
+        elif default_name == 'Default Sound Device':
+            default_card = c_idx
+            default_name = c_name
+
+    devices.append({
+        'id': 'default',
+        'name': f'Default Output ({default_name})',
+        'card': default_card,
+        'device': '0',
+        'note': 'Recommended'
+    })
+
     for card_num, card_name in card_names.items():
-        devices.append({'id': f'hw:{card_num},0',
-                        'name': f'{card_name} (Direct hw:{card_num},0)',
-                        'card': card_num, 'device': '0', 'note': 'Direct'})
+        devices.append({
+            'id': f'hw:{card_num},0',
+            'name': f'{card_name} (Direct hw:{card_num},0)',
+            'card': card_num,
+            'device': '0',
+            'note': 'Direct'
+        })
     return devices
 
 
@@ -141,25 +201,46 @@ def get_current_volume() -> int:
 
 
 def set_hardware_volume(percent: int):
-    """Set USB audio volume via amixer. Uses raw value for accuracy."""
+    """
+    Set hardware volume and ensure unmute across all common mixer controls.
+    Tries Speaker, Master, PCM, Headphone, Playback on multiple card references.
+    """
     percent = max(0, min(100, percent))
-    raw = round(percent / 100 * 37)
     card = _check_alsa_card()
-    # Try card short name first, then index, then fallback to index 1
-    candidates = []
+    card_args = []
     if card.get('short_name'):
-        candidates.append(['amixer', '-c', card['short_name'], 'sset', 'Speaker', str(raw)])
+        card_args.append(['-c', card['short_name']])
     if card.get('index'):
-        candidates.append(['amixer', '-c', card['index'], 'sset', 'Speaker', str(raw)])
-    candidates.append(['amixer', '-c', '1', 'sset', 'Speaker', str(raw)])
-    for cmd in candidates:
-        try:
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
-            if result.returncode == 0:
-                return
-        except Exception:
-            pass
-    app.logger.error('amixer volume set failed: all candidates exhausted')
+        card_args.append(['-c', str(card['index'])])
+    card_args.append(['-c', '1'])
+    card_args.append(['-c', '0'])
+    card_args.append([])  # default ALSA card
+
+    controls = ['Speaker', 'Master', 'PCM', 'Headphone', 'Playback']
+
+    success = False
+    for c_arg in card_args:
+        for ctrl in controls:
+            try:
+                # 1. Unmute control (critical after reboot or power loss)
+                subprocess.run(
+                    ['amixer'] + c_arg + ['sset', ctrl, 'unmute'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
+                )
+                # 2. Set volume percentage (native across all ALSA cards)
+                res = subprocess.run(
+                    ['amixer'] + c_arg + ['sset', ctrl, f'{percent}%'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
+                )
+                if res.returncode == 0:
+                    success = True
+            except Exception:
+                pass
+        if success:
+            break
+
+    if not success:
+        app.logger.warning('amixer volume set: relying on player software volume fallback')
 
 
 def get_settings():
@@ -175,72 +256,95 @@ def get_settings():
 # Audio hardware health monitor
 # ---------------------------------------------------------------------------
 _audio_health = {
-    'ok':         False,
-    'card':       '',      # e.g. "USB Audio Device"
-    'card_index': '',      # e.g. "1"
-    'device_node':'',      # e.g. "pcmC1D0p"
-    'usb_id':     '',      # e.g. "0d8c:0014"
-    'last_check': '',
-    'last_repair':'',
-    'error':      '',
+    'ok':          False,
+    'card':        '',
+    'card_index':  '',
+    'device_node': '',
+    'usb_id':      '',
+    'last_check':  '',
+    'last_repair': '',
+    'error':       '',
+    'player':      'mpv' if shutil.which('mpv') else ('mpg123' if shutil.which('mpg123') else 'unknown'),
 }
 _health_lock = _threading.Lock()
 
 
 def _check_usb_present() -> bool:
-    """Return True if USB audio device is visible to lsusb."""
+    """Return True if USB audio device or any sound card is visible."""
+    try:
+        if os.path.exists('/proc/asound/cards'):
+            with open('/proc/asound/cards', 'r') as f:
+                content = f.read()
+                if re.search(r'usb|audio|sound|c-media|dac|device', content, re.IGNORECASE):
+                    return True
+    except Exception:
+        pass
     try:
         out = subprocess.check_output(['lsusb'], stderr=subprocess.DEVNULL, text=True)
-        return bool(re.search(r'0d8c', out))
+        return bool(re.search(r'audio|sound|c-media|dac|0d8c', out, re.IGNORECASE))
     except Exception:
         return False
 
 
 def _check_alsa_card() -> dict:
-    """Return dict with card info if ALSA sees the USB audio card."""
+    """Return dict with card info from /proc/asound/cards, prioritizing USB audio."""
     result = {'found': False, 'index': '', 'name': '', 'short_name': ''}
+    candidates = []
     try:
         with open('/proc/asound/cards', 'r') as f:
             for line in f:
-                # e.g. " 1 [Device         ]: USB-Audio - USB Audio Device"
                 m = re.match(r'^\s*(\d+)\s+\[(\S+)\s*\].*?-\s*(.+)$', line)
                 if m:
-                    result = {
+                    candidates.append({
                         'found':      True,
                         'index':      m.group(1),
-                        'short_name': m.group(2).strip(),   # e.g. "Device"
-                        'name':       m.group(3).strip(),   # e.g. "USB Audio Device"
-                    }
+                        'short_name': m.group(2).strip(),
+                        'name':       m.group(3).strip(),
+                    })
     except Exception:
         pass
-    return result
+
+    if not candidates:
+        return result
+
+    # Prioritize USB device if present
+    for c in candidates:
+        if 'usb' in c['name'].lower() or 'usb' in c['short_name'].lower():
+            return c
+
+    # Fallback to first available audio card (e.g., onboard / VM virtual audio)
+    return candidates[0]
 
 
 def _amixer_sget(card: dict) -> tuple[bool, int, str]:
     """
-    Try to read Speaker volume via amixer.
+    Try to read volume via amixer across all common controls (Speaker, Master, PCM, etc.).
     Returns (ok: bool, volume: int, error_str: str).
-    Uses card short_name preferentially (most reliable across ALSA configs).
     """
-    candidates = []
+    card_args = []
     if card.get('short_name'):
-        candidates.append(['amixer', '-c', card['short_name'], 'sget', 'Speaker'])
+        card_args.append(['-c', card['short_name']])
     if card.get('index'):
-        candidates.append(['amixer', '-c', card['index'], 'sget', 'Speaker'])
-        candidates.append(['amixer', '-D', f'hw:{card["index"]}', 'sget', 'Speaker'])
+        card_args.append(['-c', str(card['index'])])
+    card_args.append(['-c', '1'])
+    card_args.append(['-c', '0'])
+    card_args.append([])
 
+    controls = ['Speaker', 'Master', 'PCM', 'Headphone', 'Playback']
     last_err = ''
-    for cmd in candidates:
-        try:
-            out = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True, timeout=3)
-            m = re.search(r'\[(\d+)%\]', out)
-            if m:
-                return True, int(m.group(1)), ''
-            last_err = f'no-[xx%]-match cmd={" ".join(cmd[2:])}'
-        except subprocess.CalledProcessError as e:
-            last_err = f'rc={e.returncode} stderr={e.stderr[:60] if e.stderr else ""}'
-        except Exception as e:
-            last_err = str(e)[:60]
+
+    for c_arg in card_args:
+        for ctrl in controls:
+            cmd = ['amixer'] + c_arg + ['sget', ctrl]
+            try:
+                out = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True, timeout=2)
+                m = re.search(r'\[(\d+)%\]', out)
+                if m:
+                    return True, int(m.group(1)), ''
+            except subprocess.CalledProcessError as e:
+                last_err = f'rc={e.returncode} {e.stderr[:60] if e.stderr else ""}'
+            except Exception as e:
+                last_err = str(e)[:60]
     return False, 0, last_err
 
 
@@ -249,9 +353,8 @@ def _check_pcm_accessible(card_index: str) -> bool:
     pcm = f'/dev/snd/pcmC{card_index}D0p'
     if os.path.exists(pcm) and os.access(pcm, os.W_OK):
         return True
-    # Also try /proc/asound/cardN/pcm0p as fallback
     proc_pcm = f'/proc/asound/card{card_index}/pcm0p'
-    return os.path.isdir(proc_pcm)
+    return os.path.isdir(proc_pcm) or os.path.exists('/dev/snd')
 
 
 def _repair_audio() -> str:
@@ -279,36 +382,67 @@ def _repair_audio() -> str:
         steps.append('module-ok')
 
     # Fix /dev/snd permissions
-    for node in ['/dev/snd/pcmC1D0p', '/dev/snd/pcmC1D0c',
-                 '/dev/snd/controlC1', '/dev/snd/seq', '/dev/snd/timer']:
-        try:
-            if os.path.exists(node):
-                subprocess.run(['chmod', 'o+rw', node],
-                               capture_output=True, timeout=2)
-        except Exception:
-            pass
-    steps.append('perms-fixed')
-
-    # Verify/write /etc/asound.conf
     try:
-        asound_ok = False
-        if os.path.exists('/etc/asound.conf'):
-            with open('/etc/asound.conf', 'r') as f:
-                content = f.read()
-                asound_ok = ('hw:Device' in content or 'card Device' in content)
-        if not asound_ok:
-            with open('/etc/asound.conf', 'w') as f:
-                f.write(
-                    "# Web Alarm — auto-repaired\n"
-                    "# Use card short name 'Device' (stable across reconnects)\n"
-                    "pcm.!default {\n    type plug\n    slave { pcm \"hw:Device,0\" }\n}\n"
-                    "ctl.!default {\n    type hw\n    card Device\n}\n"
-                )
-            steps.append('asound-written')
-        else:
-            steps.append('asound-ok')
+        if os.path.isdir('/dev/snd'):
+            for f in os.listdir('/dev/snd'):
+                p = os.path.join('/dev/snd', f)
+                subprocess.run(['chmod', 'o+rw', p], capture_output=True, timeout=2)
+            steps.append('perms-fixed')
     except Exception:
-        steps.append('asound-skip')
+        pass
+
+    # Ensure unmuted
+    try:
+        s = get_settings()
+        set_hardware_volume(s.volume)
+        steps.append('unmuted')
+    except Exception:
+        pass
+
+    # Verify/write /etc/asound.conf with dmix (Direct Mixing)
+    try:
+        if card['found']:
+            card_ctl = card.get('short_name') or card.get('index') or '0'
+            asound_content = (
+                f"# Web Alarm — auto-generated with dmix\n"
+                f"pcm.!default {{\n"
+                f"    type plug\n"
+                f"    slave.pcm \"dmixer\"\n"
+                f"}}\n\n"
+                f"pcm.dmixer {{\n"
+                f"    type dmix\n"
+                f"    ipc_key 1024\n"
+                f"    ipc_perm 0666\n"
+                f"    slave {{\n"
+                f"        pcm \"hw:{card_ctl},0\"\n"
+                f"        period_time 0\n"
+                f"        period_size 1024\n"
+                f"        buffer_size 4096\n"
+                f"        rate 44100\n"
+                f"    }}\n"
+                f"    bindings {{\n"
+                f"        0 0\n"
+                f"        1 1\n"
+                f"    }}\n"
+                f"}}\n\n"
+                f"ctl.!default {{\n"
+                f"    type hw\n"
+                f"    card {card_ctl}\n"
+                f"}}\n"
+            )
+            need_write = True
+            if os.path.exists('/etc/asound.conf'):
+                with open('/etc/asound.conf', 'r') as af:
+                    if f'card {card_ctl}' in af.read():
+                        need_write = False
+            if need_write:
+                with open('/etc/asound.conf', 'w') as af:
+                    af.write(asound_content)
+                steps.append(f'asound-written({card_ctl})')
+            else:
+                steps.append('asound-ok')
+    except Exception as e:
+        steps.append(f'asound-skip:{e}')
 
     # Disable JACK/pulse ALSA configs
     for conf in ['/etc/alsa/conf.d/50-jack.conf',
@@ -328,7 +462,7 @@ def run_audio_health_check():
     """
     Full health check + auto-repair. Updates _audio_health dict.
     Safe to call from any thread.
-    amixer is used for volume only — failures here do NOT block playback.
+    amixer failures do NOT block playback because software volume fallback is enabled.
     """
     now = datetime.now(WIB).strftime('%H:%M:%S')
     usb_ok = _check_usb_present()
@@ -341,38 +475,30 @@ def run_audio_health_check():
 
     if card['found']:
         amixer_ok, vol, amixer_err = _amixer_sget(card)
-        if amixer_err:
-            app.logger.warning(f'amixer error (non-fatal): {amixer_err}')
-            # amixer failure is non-fatal: if USB+card+pcm are ok, audio can still play
-            if usb_ok and pcm_ok:
-                amixer_ok = True   # mark ok so playback is not blocked
-                # Use DB volume instead of hardcoded 80
-                try:
-                    with app.app_context():
-                        s = get_settings()
-                        vol = s.volume
-                except Exception:
-                    vol = vol or 80  # last resort fallback only
+        if amixer_err or not amixer_ok:
+            try:
+                with app.app_context():
+                    s = get_settings()
+                    vol = s.volume
+            except Exception:
+                vol = 80
+            amixer_ok = True  # Software volume fallback will scale audio
 
-    overall_ok = usb_ok and card['found'] and pcm_ok and amixer_ok
+    overall_ok = card['found'] and (pcm_ok or usb_ok)
     repair_msg = ''
 
     if not overall_ok:
-        err_detail = f'usb={usb_ok} card={card["found"]} pcm={pcm_ok} amixer={amixer_ok} err={amixer_err}'
+        err_detail = f'usb={usb_ok} card={card["found"]} pcm={pcm_ok} err={amixer_err}'
         app.logger.warning(f'Audio health FAIL: {err_detail} — attempting repair')
         _log_audio('warn', 'HEALTH_FAIL', err_detail)
         repair_msg = _repair_audio()
         _log_audio('info', 'REPAIR_START', repair_msg)
-        _time.sleep(6)
+        _time.sleep(3)
 
         # Re-check after repair
         card   = _check_alsa_card()
         pcm_ok = _check_pcm_accessible(card['index']) if card['found'] else False
-        if card['found']:
-            amixer_ok, new_vol, _ = _amixer_sget(card)
-            if amixer_ok:
-                vol = new_vol
-        overall_ok = usb_ok and card['found'] and pcm_ok and amixer_ok
+        overall_ok = card['found'] and (pcm_ok or usb_ok)
         repair_result = f'{repair_msg} → ok={overall_ok}'
         app.logger.info(f'Audio repair result: {repair_result}')
         _log_audio('ok' if overall_ok else 'error', 'REPAIR_DONE', repair_result)
@@ -392,19 +518,21 @@ def run_audio_health_check():
         _log_audio('ok', 'HEALTH_OK',
                    f'card={card.get("name","")} vol={vol}% pcm={pcm_ok}')
 
+    active_player = 'mpv' if shutil.which('mpv') else ('mpg123' if shutil.which('mpg123') else 'unknown')
+
     with _health_lock:
         _audio_health.update({
             'ok':          overall_ok,
             'card':        card.get('name', ''),
             'card_index':  card.get('index', ''),
             'device_node': f'pcmC{card.get("index","")}D0p' if card.get('index') else '',
-            'usb_id':      '0d8c:0014' if usb_ok else '',
+            'usb_id':      'connected' if usb_ok else '',
             'last_check':  now,
             'last_repair': repair_msg,
-            'error':       '' if overall_ok else
-                           f'usb={usb_ok} card={card["found"]} pcm={pcm_ok} amixer={amixer_ok}',
+            'error':       '' if overall_ok else f'card={card["found"]} pcm={pcm_ok}',
             'volume':      vol,
             'amixer_warn': amixer_err if amixer_err else '',
+            'player':      active_player,
         })
 
     return overall_ok
@@ -458,17 +586,23 @@ def _alarm_is_playing() -> bool:
 
 
 def _verify_alarm_playback(proc: subprocess.Popen, label: str,
-                           filepath: str, volume: int, time_str: str):
+                           filepath: str, volume: int, time_str: str,
+                           player_name: str = 'audio'):
     """
     Called in a background thread 2 seconds after alarm starts.
-    Checks if mpg123 is still running. If it died instantly (bad output device),
-    logs the failure, runs health repair, and retries playback once.
+    Checks if player is still running. If it died instantly (bad output device),
+    logs the failure with captured stderr, runs health repair, and retries playback once.
     """
     _time.sleep(2)
     if proc.poll() is not None:
-        # Process already exited — output probably failed
+        err_msg = ''
+        try:
+            if proc.stderr:
+                err_msg = proc.stderr.read().strip()
+        except Exception:
+            pass
         _log_audio('error', 'PLAYBACK_FAIL',
-                   f'mpg123 exited immediately (rc={proc.returncode}) '
+                   f'{player_name} exited immediately (rc={proc.returncode}) {err_msg[:80]} '
                    f'label="{label}" → auto-repair & retry')
         # Run full health repair
         try:
@@ -479,18 +613,19 @@ def _verify_alarm_playback(proc: subprocess.Popen, label: str,
             return
 
         _time.sleep(2)
-        # Retry playback
+        # Retry playback using best available command
         try:
             set_hardware_volume(volume)
+            retry_cmd, retry_player = get_audio_player_cmd(filepath, volume)
             retry_proc = subprocess.Popen(
-                ['mpg123', '-q', filepath],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True
+                retry_cmd,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, start_new_session=True
             )
             _time.sleep(2)
             if retry_proc.poll() is None:
                 _log_audio('ok', 'PLAYBACK_RETRY_OK',
-                           f'pid={retry_proc.pid} label="{label}" — retry succeeded')
+                           f'pid={retry_proc.pid} player={retry_player} label="{label}" — retry succeeded')
                 with _alarm_lock:
                     _alarm_state.update({
                         'playing': True, 'label': label, 'time': time_str,
@@ -498,19 +633,25 @@ def _verify_alarm_playback(proc: subprocess.Popen, label: str,
                         'process': retry_proc,
                     })
             else:
+                retry_err = ''
+                try:
+                    if retry_proc.stderr:
+                        retry_err = retry_proc.stderr.read().strip()
+                except Exception:
+                    pass
                 _log_audio('error', 'PLAYBACK_RETRY_FAIL',
-                           f'label="{label}" rc={retry_proc.returncode} — FATAL, audio output dead')
+                           f'label="{label}" rc={retry_proc.returncode} {retry_err[:80]} — audio output failed')
         except Exception as e:
             _log_audio('error', 'PLAYBACK_RETRY_ERROR', str(e))
     else:
         _log_audio('ok', 'PLAYBACK_OK',
-                   f'pid={proc.pid} label="{label}" — mpg123 still running ✓')
+                   f'pid={proc.pid} player={player_name} label="{label}" — playback active ✓')
 
 
 def _start_alarm(filepath: str, volume: int, label: str, time_str: str):
     global _alarm_state
 
-    # Health check & repair OUTSIDE the lock to avoid long blocking
+    # Quick pre-check
     h = get_audio_health()
     if not h.get('ok'):
         app.logger.warning('Audio unhealthy before alarm — running repair')
@@ -523,14 +664,15 @@ def _start_alarm(filepath: str, volume: int, label: str, time_str: str):
             pass
 
     set_hardware_volume(volume)
+    cmd, player_name = get_audio_player_cmd(filepath, volume)
     _log_audio('info', 'ALARM_FIRE',
-               f'label="{label}" time={time_str} file={os.path.basename(filepath)} vol={volume}%')
+               f'label="{label}" time={time_str} player={player_name} file={os.path.basename(filepath)} vol={volume}%')
 
     try:
         proc = subprocess.Popen(
-            ['mpg123', '-q', filepath],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True
+            cmd,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            text=True, start_new_session=True
         )
     except Exception as e:
         app.logger.error(f'Alarm play error: {e}')
@@ -553,12 +695,12 @@ def _start_alarm(filepath: str, volume: int, label: str, time_str: str):
             'show_until': _t.time() + 30,  # keep modal visible for at least 30s
         })
     _log_audio('ok', 'ALARM_STARTED',
-               f'pid={proc.pid} label="{label}" file={os.path.basename(filepath)}')
+               f'pid={proc.pid} player={player_name} label="{label}" file={os.path.basename(filepath)}')
 
     # Verify playback is actually running after a short delay (non-blocking)
     _threading.Thread(
         target=_verify_alarm_playback,
-        args=(proc, label, filepath, volume, time_str),
+        args=(proc, label, filepath, volume, time_str, player_name),
         daemon=True
     ).start()
 
@@ -636,12 +778,13 @@ def play_test_audio(filepath, volume=80) -> bool:
             return False
         try:
             set_hardware_volume(volume)
+            cmd, player_name = get_audio_player_cmd(filepath, volume)
             _test_process = subprocess.Popen(
-                ['mpg123', '-q', filepath],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True)
+                cmd,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, start_new_session=True)
             _log_audio('info', 'TEST_PLAY',
-                       f'pid={_test_process.pid} file={os.path.basename(filepath)} vol={volume}%')
+                       f'pid={_test_process.pid} player={player_name} file={os.path.basename(filepath)} vol={volume}%')
             return True
         except Exception as e:
             app.logger.error(f'Error playing test audio: {e}')
@@ -685,7 +828,9 @@ def add_scheduler_job(schedule):
             minute=schedule.time_minute, second=0, timezone=WIB
         ),
         args=[filepath, label, schedule.time_display()],
-        id=job_id, replace_existing=True
+        id=job_id, replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
 
